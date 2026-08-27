@@ -95,7 +95,7 @@ function extractCard(text:string,confidence:number,layout:OcrLayoutItem[]=[]): S
   const phoneMatches=[...text.matchAll(/(?<!\d)(?:\+81[-\s]?)?0\d{1,4}[-\s]\d{1,4}[-\s]\d{3,4}(?!\d)/g)].map(match=>match[0]);
   const phone=phoneMatches.find(value=>value.replace(/\D/g,'').length>=10)??'';
   const website=text.match(/(?:https?:\/\/|www\.)[^\s]+/i)?.[0]?.replace(/[),。]+$/,'')??'';
-  const company=lines.find(v=>/(株式会社|有限会社|合同会社|Inc\.?|LLC|Corporation|Co\.,?\s*Ltd)/i.test(v))??lines[0]??'';
+  const company=lines.find(v=>/(株式会社|有限会社|合同会社|一般社団法人|公益社団法人|医療法人|学校法人|社会福祉法人|NPO法人|Inc\.?|LLC|Corporation|Co\.,?\s*Ltd|Limited|Company)/i.test(v))??lines.find(v=>/(サ.?ロ.?ン|事務所|オフィス|スタジオ|クリニック|医院|病院|大学|学校|協会|研究所|センター|商店|工房|企画|制作所|デザイン|サービス|ラボ|Lab\.?|Studio|Office|Consulting)/i.test(v))??'';
   const role=lines.find(v=>titlePattern.test(v))??'';
   const department=lines.find(v=>/(本部|事業部|営業部|企画部|開発部|技術部|製造部|管理部|総務部|人事部|経理部|財務部|法務部|広報部|マーケティング部|部門|支社|支店|営業所|Department|Division|Office|Team|Unit)/i.test(v)&&!titlePattern.test(v))??'';
   const excluded=new Set([company,role,department,email,phone,website]);
@@ -123,9 +123,9 @@ function extractCard(text:string,confidence:number,layout:OcrLayoutItem[]=[]): S
     if(index===0)score-=2;
     const item=layout.find(entry=>normalized(entry.text).includes(normalized(cleaned))||normalized(cleaned).includes(normalized(entry.text)));
     if(item){score+=Math.min(8,(item.height/medianHeight)*2);if(roleLayout){const dx=(item.x+item.width/2)-(roleLayout.x+roleLayout.width/2);const dy=(item.y+item.height/2)-(roleLayout.y+roleLayout.height/2);const distance=Math.hypot(dx,dy);const scale=Math.max(item.height,roleLayout.height,1);if(distance/scale<8)score+=8;}}
-    return {value:cleaned,score};
-  }).filter((candidate):candidate is {value:string;score:number}=>candidate!==null).sort((a,b)=>b.score-a.score);
-  const name=nameCandidates[0]?.value??'';
+    return {value:cleaned,score,kind:japaneseKanjiName?'kanji' as const:katakanaForeignName?'katakana' as const:'latin' as const};
+  }).filter((candidate):candidate is {value:string;score:number;kind:'kanji'|'katakana'|'latin'}=>candidate!==null).sort((a,b)=>b.score-a.score);
+  const name=(nameCandidates.find(candidate=>candidate.kind==='kanji')??nameCandidates.find(candidate=>candidate.kind==='katakana')??nameCandidates.find(candidate=>candidate.kind==='latin'))?.value??'';
   const address=lines.find(v=>/(都|道|府|県).*(市|区|町|村)|〒\s*\d{3}-?\d{4}/.test(v))??'';
   return {company,name,role,department,email,phone,address,website,rawText:text,confidence:Math.round(confidence)};
 }
@@ -154,7 +154,7 @@ export default function Home() {
   const [autoGreeting,setAutoGreeting] = useState(true);
   const [signature,setSignature] = useState(true);
   const [companyContext,setCompanyContext] = useState(true);
-  const filtered = useMemo(() => customers.filter(c => `${c.name}${c.company}${c.email}`.toLowerCase().includes(query.toLowerCase())),[query]);
+  const filtered = useMemo(() => customers.filter(c => `${c.name}${c.company}${c.email}`.toLowerCase().includes(query.toLowerCase())),[customers,query]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setLoading(false), 2100);
