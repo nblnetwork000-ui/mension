@@ -110,12 +110,15 @@ function extractCard(text:string,confidence:number,layout:OcrLayoutItem[]=[]): S
   const nameCandidates=expandedLines.map(({value,index})=>{
     const cleaned=value.replace(/^(代\s*表\s*取\s*締\s*役|代\s*表\s*社\s*員|代\s*表|取\s*締\s*役|社\s*長|部\s*長|課\s*長|主\s*任)\s*/,'').replace(/[.,，。・]+$/,'').trim();
     const compact=cleaned.replace(/\s/g,'');
-    if(!cleaned||excluded.has(value)||/(会社|法人|サロン|協会|事務所|研究所|センター|〒|都|道|府|県|市|区|町|村)/.test(compact)||/@|\d{3,}/.test(cleaned)||!/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\s・]{2,18}$/u.test(cleaned))return null;
-    if(!/\p{Script=Han}/u.test(cleaned))return null;
+    const japaneseKanjiName=/^[\p{Script=Han}々〆ヶ\s]{2,10}$/u.test(cleaned)&&compact.length>=2&&compact.length<=8;
+    const katakanaForeignName=/^[\p{Script=Katakana}ー]+(?:[\s・]+[\p{Script=Katakana}ー]+)+$/u.test(cleaned);
+    const latinForeignName=/^[A-Za-zÀ-ÖØ-öø-ÿ'-]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'-]+)+$/.test(cleaned);
+    if(!cleaned||excluded.has(value)||/(会社|法人|サ.?ロ.?ン|シェア|ショップ|スタジオ|クリニック|医院|病院|大学|学校|協会|事務所|研究所|センター|オフィス|グループ|〒|都|道|府|県|市|区|町|村)/.test(compact)||/@|\d{3,}/.test(cleaned)||(!japaneseKanjiName&&!katakanaForeignName&&!latinForeignName))return null;
     let score=0;
     if(roleIndex>=0&&index>roleIndex&&index<=roleIndex+2)score+=12;
     if(/[\s・]/.test(cleaned))score+=5;
-    if(/^[\p{Script=Han}\s・]+$/u.test(cleaned))score+=5;
+    if(japaneseKanjiName)score+=8;
+    if(katakanaForeignName||latinForeignName)score+=5;
     if(cleaned.replace(/[\s・]/g,'').length>=3&&cleaned.replace(/[\s・]/g,'').length<=8)score+=3;
     if(index===0)score-=2;
     const item=layout.find(entry=>normalized(entry.text).includes(normalized(cleaned))||normalized(cleaned).includes(normalized(entry.text)));
