@@ -85,19 +85,26 @@ async function recognizeCard(file:File,client:SupabaseClient|null,onProgress?:(p
 const emptyScan: ScanResult = {company:'',name:'',role:'',department:'',email:'',phone:'',address:'',website:'',rawText:'',confidence:0};
 
 function extractCard(text:string,confidence:number): ScanResult {
-  const lines=text.split(/\r?\n/).map(v=>v.replace(/^[^\p{L}\p{N}〒+]+/u,'').replace(/\s+/g,' ').trim()).filter(Boolean);
+  const lines=text.split(/\r?\n/).map(v=>v.replace(/^[^\p{L}\p{N}〒+]+|[^\p{L}\p{N}@.+〒-]+$/gu,'').replace(/\s+/g,' ').trim()).filter(Boolean);
   const email=text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]??'';
   const phoneMatches=[...text.matchAll(/(?<!\d)(?:\+81[-\s]?)?0\d{1,4}[-\s]\d{1,4}[-\s]\d{3,4}(?!\d)/g)].map(match=>match[0]);
   const phone=phoneMatches.find(value=>value.replace(/\D/g,'').length>=10)??'';
   const website=text.match(/(?:https?:\/\/|www\.)[^\s]+/i)?.[0]?.replace(/[),。]+$/,'')??'';
   const company=lines.find(v=>/(株式会社|有限会社|合同会社|Inc\.?|LLC|Corporation|Co\.,?\s*Ltd)/i.test(v))??lines[0]??'';
-  const role=lines.find(v=>/(代表|取締役|社長|部長|課長|主任|Manager|Director|CEO|President)/i.test(v))??'';
+  const role=lines.find(v=>/(代\s*表|取\s*締\s*役|社\s*長|部\s*長|課\s*長|主\s*任|Manager|Director|CEO|President)/i.test(v))??'';
   const department=lines.find(v=>/(事業部|営業部|企画部|開発部|部門|Department|Division)/i.test(v))??'';
   const excluded=new Set([company,role,department,email,phone,website]);
   const roleIndex=lines.indexOf(role);
-  const nameCandidates=lines.map((value,index)=>{
-    const cleaned=value.replace(/^(代表取締役|代表社員|代表|取締役|社長|部長|課長|主任)\s*/,'').trim();
-    if(!cleaned||excluded.has(value)||/(会社|法人|サロン|協会|事務所|研究所|センター|〒|都|道|府|県|市|区|町|村)/.test(cleaned)||/@|\d{3,}/.test(cleaned)||!/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\s・]{2,18}$/u.test(cleaned))return null;
+  const expandedLines=lines.map((value,index)=>({value,index}));
+  if(roleIndex>=0){
+    const parts=lines.slice(roleIndex+1,roleIndex+3).map(value=>value.replace(/[^\p{Script=Han}]/gu,'')).filter(value=>value.length>=1&&value.length<=4);
+    if(parts.length===2)expandedLines.push({value:`${parts[0]} ${parts[1]}`,index:roleIndex+1});
+  }
+  const nameCandidates=expandedLines.map(({value,index})=>{
+    const cleaned=value.replace(/^(代\s*表\s*取\s*締\s*役|代\s*表\s*社\s*員|代\s*表|取\s*締\s*役|社\s*長|部\s*長|課\s*長|主\s*任)\s*/,'').replace(/[.,，。・]+$/,'').trim();
+    const compact=cleaned.replace(/\s/g,'');
+    if(!cleaned||excluded.has(value)||/(会社|法人|サロン|協会|事務所|研究所|センター|〒|都|道|府|県|市|区|町|村)/.test(compact)||/@|\d{3,}/.test(cleaned)||!/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\s・]{2,18}$/u.test(cleaned))return null;
+    if(!/\p{Script=Han}/u.test(cleaned))return null;
     let score=0;
     if(roleIndex>=0&&index>roleIndex&&index<=roleIndex+2)score+=12;
     if(/[\s・]/.test(cleaned))score+=5;
