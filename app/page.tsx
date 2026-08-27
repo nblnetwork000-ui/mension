@@ -42,6 +42,44 @@ async function createOcrWorker(logger?:(message:{status:string;progress?:number}
   return engine.createWorker('jpn+eng',1,{logger,workerPath:'/vendor/worker.min.js',corePath:'/vendor/core',langPath:'https://tessdata.projectnaptha.com/4.0.0'});
 }
 
+async function prepareCardImage(file:File) {
+  const bitmap=await createImageBitmap(file);
+  const maxSide=2600;
+  const scale=Math.min(1,maxSide/Math.max(bitmap.width,bitmap.height));
+  const width=Math.max(1,Math.round(bitmap.width*scale));
+  const height=Math.max(1,Math.round(bitmap.height*scale));
+  const canvas=document.createElement('canvas');
+  canvas.width=width;canvas.height=height;
+  const context=canvas.getContext('2d',{alpha:false});
+  if(!context)throw new Error('Image processing unavailable');
+  context.filter='contrast(1.12) saturate(.9)';
+  context.drawImage(bitmap,0,0,width,height);
+  bitmap.close();
+  return canvas.toDataURL('image/jpeg',.9).split(',')[1];
+}
+
+async function recognizeCard(file:File,client:SupabaseClient|null,onProgress?:(progress:number)=>void){
+  onProgress?.(8);
+  if(client){
+    const {data}=await client.auth.getSession();
+    const token=data.session?.access_token;
+    if(token){
+      const image=await prepareCardImage(file);
+      onProgress?.(35);
+      const response=await fetch('/api/ocr',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({image})});
+      if(response.ok){
+        const result=await response.json();
+        onProgress?.(100);
+        return {text:String(result.text||''),confidence:Number(result.confidence||0)};
+      }
+    }
+  }
+  const worker=await createOcrWorker(message=>{if(message.status==='recognizing text')onProgress?.(35+Math.round((message.progress||0)*65));});
+  const result=await worker.recognize(file);
+  await worker.terminate();
+  return result.data;
+}
+
 const emptyScan: ScanResult = {company:'',name:'',role:'',department:'',email:'',phone:'',address:'',website:'',rawText:'',confidence:0};
 
 function extractCard(text:string,confidence:number): ScanResult {
@@ -132,10 +170,8 @@ export default function Home() {
     const file=e.target.files[0];
     setProcessing(true); setOcrProgress(1); setScanResult(null);
     try{
-      const worker=await createOcrWorker(m=>{if(m.status==='recognizing text')setOcrProgress(Math.round((m.progress||0)*100));});
-      const result=await worker.recognize(file);
-      await worker.terminate();
-      const parsed=extractCard(result.data.text,result.data.confidence);
+      const result=await recognizeCard(file,supabase,setOcrProgress);
+      const parsed=extractCard(result.text,result.confidence);
       setScanResult(parsed);
       notify('名刺の解析が完了しました',parsed.email?'内容を確認して顧客へ保存してください':'メールアドレスを確認してください');
     }catch{
@@ -196,7 +232,7 @@ export default function Home() {
     <nav className="bottom-nav" aria-label="メインメニュー">{nav.map(item=><button key={item.id} className={tab===item.id?'active':''} onClick={()=>setTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
     {currentUser&&showGuide&&<OnboardingGuide onClose={closeGuide}/>} 
     {showTemplate&&<TemplateEditor value={mailTemplate} onClose={()=>setShowTemplate(false)} onSave={saveTemplate}/>} 
-    {showProfile&&<ProfileEditor value={profile} onClose={()=>setShowProfile(false)} onSave={saveProfile}/>} 
+    {showProfile&&<ProfileEditor value={profile} client={supabase} onClose={()=>setShowProfile(false)} onSave={saveProfile}/>} 
     {toast&&<div className="toast" role="status"><span>✓</span><div><strong>{toast.title}</strong><small>{toast.detail}</small></div></div>}
   </main>;
 }
@@ -253,9 +289,9 @@ function TemplateEditor({value,onClose,onSave}:{value:MailTemplate;onClose:()=>v
   return <div className="template-overlay" role="dialog" aria-modal="true" aria-labelledby="template-title"><div className="template-card"><div className="template-head"><div><small>MAIL TEMPLATE</small><h2 id="template-title">メール文面を編集</h2></div><button onClick={onClose} aria-label="閉じる">×</button></div><label><span>件名</span><input value={draft.subject} onChange={e=>setDraft({...draft,subject:e.target.value})}/></label><label><span>本文</span><textarea rows={12} value={draft.body} onChange={e=>setDraft({...draft,body:e.target.value})}/></label><div className="template-vars"><small>差し込み変数</small><div>{['{{会社名}}','{{氏名}}','{{役職}}','{{AI生成文}}','{{送信者名}}'].map(v=><button key={v} onClick={()=>insert(v)}>{v}</button>)}</div></div><div className="template-actions"><button onClick={onClose}>キャンセル</button><button onClick={()=>onSave(draft)} disabled={!draft.subject.trim()||!draft.body.trim()}>この内容を保存</button></div></div></div>;
 }
 
-function ProfileEditor({value,onClose,onSave}:{value:UserProfile;onClose:()=>void;onSave:(v:UserProfile)=>void}) {
+function ProfileEditor({value,client,onClose,onSave}:{value:UserProfile;client:SupabaseClient|null;onClose:()=>void;onSave:(v:UserProfile)=>void}) {
   const [draft,setDraft]=useState(value);const [reading,setReading]=useState(false);const [summarizing,setSummarizing]=useState(false);const [message,setMessage]=useState('');
-  const readCard=async(e:ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;setReading(true);setMessage('名刺を読み取っています…');try{const worker=await createOcrWorker();const result=await worker.recognize(file);await worker.terminate();const card=extractCard(result.data.text,result.data.confidence);setDraft(v=>({...v,company:card.company,name:card.name,role:card.role,department:card.department,email:card.email,phone:card.phone,website:card.website||v.website}));setMessage('名刺の内容を入力しました。確認して保存してください。');}catch{setMessage('読み取れませんでした。明るい場所で撮り直してください。');}finally{setReading(false);e.target.value='';}};
+  const readCard=async(e:ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;setReading(true);setMessage('名刺を読み取っています…');try{const result=await recognizeCard(file,client);const card=extractCard(result.text,result.confidence);setDraft(v=>({...v,company:card.company,name:card.name,role:card.role,department:card.department,email:card.email,phone:card.phone,website:card.website||v.website}));setMessage('名刺の内容を入力しました。確認して保存してください。');}catch{setMessage('読み取れませんでした。明るい場所で撮り直してください。');}finally{setReading(false);e.target.value='';}};
   const summarize=async()=>{if(!draft.website.trim())return;setSummarizing(true);setMessage('会社サイトを確認しています…');try{const res=await fetch(`/api/site-summary?url=${encodeURIComponent(draft.website)}`);const data=await res.json();if(!res.ok)throw new Error();setDraft(v=>({...v,companySummary:data.summary||''}));setMessage('サイト情報から会社概要の下書きを作成しました。');}catch{setMessage('サイトを読み取れませんでした。URLを確認してください。');}finally{setSummarizing(false);}};
   return <div className="template-overlay" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="template-card profile-card"><div className="template-head"><div><small>MY PROFILE</small><h2 id="profile-title">使用者情報を登録</h2></div><button onClick={onClose}>×</button></div><label className="profile-scan"><input type="file" accept="image/*" capture="environment" onChange={readCard}/><span>▣</span><div><strong>{reading?'名刺を解析中…':'自分の名刺を撮影・選択'}</strong><small>会社名・氏名・役職・連絡先を自動入力</small></div><b>›</b></label>{message&&<div className="profile-message">{message}</div>}<div className="result-fields profile-fields">{([['会社名','company'],['氏名','name'],['部署','department'],['役職','role'],['メール','email'],['電話番号','phone']] as const).map(([label,key])=><label key={key}><span>{label}</span><input value={draft[key]} onChange={e=>setDraft({...draft,[key]:e.target.value})}/></label>)}</div><div className="website-box"><label><span>会社Webサイト</span><div><input value={draft.website} onChange={e=>setDraft({...draft,website:e.target.value})} placeholder="https://example.jp"/><button onClick={summarize} disabled={summarizing||!draft.website.trim()}>{summarizing?'読取中…':'サイトを要約'}</button></div></label><label><span>会社・事業概要</span><textarea rows={6} value={draft.companySummary} onChange={e=>setDraft({...draft,companySummary:e.target.value})} placeholder="Webサイトから自動作成、または手入力できます"/></label></div><div className="template-actions"><button onClick={onClose}>キャンセル</button><button onClick={()=>onSave(draft)} disabled={!draft.name.trim()||!draft.company.trim()}>プロフィールを保存</button></div></div></div>;
 }
