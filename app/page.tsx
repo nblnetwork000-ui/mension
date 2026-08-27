@@ -17,6 +17,7 @@ type MailTemplate = {subject:string;body:string};
 type UserProfile = {company:string;name:string;role:string;department:string;email:string;phone:string;website:string;companySummary:string};
 type MailProvider = 'none'|'gmail'|'workspace'|'outlook'|'microsoft365'|'smtp';
 type SenderConfig = {provider:MailProvider;email:string;displayName:string;replyTo:string;smtpHost:string;smtpPort:string};
+type OcrLayoutItem = {text:string;x:number;y:number;width:number;height:number;confidence:number};
 
 type OcrWorker = {recognize:(image:File)=>Promise<{data:{text:string;confidence:number}}>;terminate:()=>Promise<void>};
 type TesseractBrowser = {createWorker:(languages:string,mode?:number,options?:{logger?:(message:{status:string;progress?:number})=>void;workerPath?:string;corePath?:string;langPath?:string})=>Promise<OcrWorker>};
@@ -72,27 +73,31 @@ async function recognizeCard(file:File,client:SupabaseClient|null,onProgress?:(p
       if(response.ok){
         const result=await response.json();
         onProgress?.(100);
-        return {text:String(result.text||''),confidence:Number(result.confidence||0)};
+        return {text:String(result.text||''),confidence:Number(result.confidence||0),layout:Array.isArray(result.layout)?result.layout as OcrLayoutItem[]:[]};
       }
     }
   }
   const worker=await createOcrWorker(message=>{if(message.status==='recognizing text')onProgress?.(35+Math.round((message.progress||0)*65));});
   const result=await worker.recognize(file);
   await worker.terminate();
-  return result.data;
+  return {...result.data,layout:[] as OcrLayoutItem[]};
 }
 
 const emptyScan: ScanResult = {company:'',name:'',role:'',department:'',email:'',phone:'',address:'',website:'',rawText:'',confidence:0};
 
-function extractCard(text:string,confidence:number): ScanResult {
+const titlePattern=/(代\s*表(?:取\s*締\s*役|社\s*員)?|会\s*長|社\s*長|副\s*社\s*長|専\s*務|常\s*務|取\s*締\s*役|監\s*査\s*役|執\s*行\s*役\s*員|理\s*事\s*長?|副\s*理\s*事\s*長|本\s*部\s*長|支\s*社\s*長|支\s*店\s*長|所\s*長|室\s*長|局\s*長|部\s*長|次\s*長|課\s*長|係\s*長|主\s*任|主\s*幹|主\s*査|統\s*括|責\s*任\s*者|店\s*長|工\s*場\s*長|マネージャー|リーダー|顧\s*問|相\s*談\s*役|参\s*与|創\s*業\s*者|共\s*同\s*創\s*業\s*者|院\s*長|副\s*院\s*長|医\s*師|歯\s*科\s*医\s*師|薬\s*剤\s*師|看\s*護\s*師|教\s*授|准\s*教\s*授|講\s*師|弁\s*護\s*士|司\s*法\s*書\s*士|行\s*政\s*書\s*士|税\s*理\s*士|公\s*認\s*会\s*計\s*士|社\s*会\s*保\s*険\s*労\s*務\s*士|Chief\s+[A-Za-z ]+Officer|CEO|COO|CFO|CTO|CIO|CMO|CISO|President|Vice President|Chair(?:man|person)|Representative Director|Managing Director|Executive Officer|General Manager|Manager|Director|Head|Lead|Supervisor|Partner|Founder|Owner|Principal|Consultant|Professor|Attorney)/i;
+
+function normalized(value:string){return value.replace(/[\s・.,，。()（）-]/g,'').toLowerCase();}
+
+function extractCard(text:string,confidence:number,layout:OcrLayoutItem[]=[]): ScanResult {
   const lines=text.split(/\r?\n/).map(v=>v.replace(/^[^\p{L}\p{N}〒+]+|[^\p{L}\p{N}@.+〒-]+$/gu,'').replace(/\s+/g,' ').trim()).filter(Boolean);
   const email=text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]??'';
   const phoneMatches=[...text.matchAll(/(?<!\d)(?:\+81[-\s]?)?0\d{1,4}[-\s]\d{1,4}[-\s]\d{3,4}(?!\d)/g)].map(match=>match[0]);
   const phone=phoneMatches.find(value=>value.replace(/\D/g,'').length>=10)??'';
   const website=text.match(/(?:https?:\/\/|www\.)[^\s]+/i)?.[0]?.replace(/[),。]+$/,'')??'';
   const company=lines.find(v=>/(株式会社|有限会社|合同会社|Inc\.?|LLC|Corporation|Co\.,?\s*Ltd)/i.test(v))??lines[0]??'';
-  const role=lines.find(v=>/(代\s*表|取\s*締\s*役|社\s*長|部\s*長|課\s*長|主\s*任|Manager|Director|CEO|President)/i.test(v))??'';
-  const department=lines.find(v=>/(事業部|営業部|企画部|開発部|部門|Department|Division)/i.test(v))??'';
+  const role=lines.find(v=>titlePattern.test(v))??'';
+  const department=lines.find(v=>/(本部|事業部|営業部|企画部|開発部|技術部|製造部|管理部|総務部|人事部|経理部|財務部|法務部|広報部|マーケティング部|部門|支社|支店|営業所|Department|Division|Office|Team|Unit)/i.test(v)&&!titlePattern.test(v))??'';
   const excluded=new Set([company,role,department,email,phone,website]);
   const roleIndex=lines.indexOf(role);
   const expandedLines=lines.map((value,index)=>({value,index}));
@@ -100,6 +105,8 @@ function extractCard(text:string,confidence:number): ScanResult {
     const parts=lines.slice(roleIndex+1,roleIndex+3).map(value=>value.replace(/[^\p{Script=Han}]/gu,'')).filter(value=>value.length>=1&&value.length<=4);
     if(parts.length===2)expandedLines.push({value:`${parts[0]} ${parts[1]}`,index:roleIndex+1});
   }
+  const roleLayout=layout.find(item=>normalized(item.text).includes(normalized(role))||normalized(role).includes(normalized(item.text)));
+  const medianHeight=layout.length?[...layout].map(item=>item.height).sort((a,b)=>a-b)[Math.floor(layout.length/2)]||1:1;
   const nameCandidates=expandedLines.map(({value,index})=>{
     const cleaned=value.replace(/^(代\s*表\s*取\s*締\s*役|代\s*表\s*社\s*員|代\s*表|取\s*締\s*役|社\s*長|部\s*長|課\s*長|主\s*任)\s*/,'').replace(/[.,，。・]+$/,'').trim();
     const compact=cleaned.replace(/\s/g,'');
@@ -111,6 +118,8 @@ function extractCard(text:string,confidence:number): ScanResult {
     if(/^[\p{Script=Han}\s・]+$/u.test(cleaned))score+=5;
     if(cleaned.replace(/[\s・]/g,'').length>=3&&cleaned.replace(/[\s・]/g,'').length<=8)score+=3;
     if(index===0)score-=2;
+    const item=layout.find(entry=>normalized(entry.text).includes(normalized(cleaned))||normalized(cleaned).includes(normalized(entry.text)));
+    if(item){score+=Math.min(8,(item.height/medianHeight)*2);if(roleLayout){const dx=(item.x+item.width/2)-(roleLayout.x+roleLayout.width/2);const dy=(item.y+item.height/2)-(roleLayout.y+roleLayout.height/2);const distance=Math.hypot(dx,dy);const scale=Math.max(item.height,roleLayout.height,1);if(distance/scale<8)score+=8;}}
     return {value:cleaned,score};
   }).filter((candidate):candidate is {value:string;score:number}=>candidate!==null).sort((a,b)=>b.score-a.score);
   const name=nameCandidates[0]?.value??'';
@@ -197,7 +206,7 @@ export default function Home() {
     setProcessing(true); setOcrProgress(1); setScanResult(null);
     try{
       const result=await recognizeCard(file,supabase,setOcrProgress);
-      const parsed=extractCard(result.text,result.confidence);
+      const parsed=extractCard(result.text,result.confidence,result.layout);
       setScanResult(parsed);
       notify('名刺の解析が完了しました',parsed.email?'内容を確認して顧客へ保存してください':'メールアドレスを確認してください');
     }catch{
@@ -336,7 +345,7 @@ function SenderEditor({value,onClose,onSave}:{value:SenderConfig;onClose:()=>voi
 
 function ProfileEditor({value,client,onClose,onSave}:{value:UserProfile;client:SupabaseClient|null;onClose:()=>void;onSave:(v:UserProfile)=>void}) {
   const [draft,setDraft]=useState(value);const [reading,setReading]=useState(false);const [summarizing,setSummarizing]=useState(false);const [message,setMessage]=useState('');
-  const readCard=async(e:ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;setReading(true);setMessage('名刺を読み取っています…');try{const result=await recognizeCard(file,client);const card=extractCard(result.text,result.confidence);setDraft(v=>({...v,company:card.company,name:card.name,role:card.role,department:card.department,email:card.email,phone:card.phone,website:card.website||v.website}));setMessage('名刺の内容を入力しました。確認して保存してください。');}catch{setMessage('読み取れませんでした。明るい場所で撮り直してください。');}finally{setReading(false);e.target.value='';}};
+  const readCard=async(e:ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;setReading(true);setMessage('名刺を読み取っています…');try{const result=await recognizeCard(file,client);const card=extractCard(result.text,result.confidence,result.layout);setDraft(v=>({...v,company:card.company,name:card.name,role:card.role,department:card.department,email:card.email,phone:card.phone,website:card.website||v.website}));setMessage('名刺の内容を入力しました。確認して保存してください。');}catch{setMessage('読み取れませんでした。明るい場所で撮り直してください。');}finally{setReading(false);e.target.value='';}};
   const summarize=async()=>{if(!draft.website.trim())return;setSummarizing(true);setMessage('会社サイトを確認しています…');try{const res=await fetch(`/api/site-summary?url=${encodeURIComponent(draft.website)}`);const data=await res.json();if(!res.ok)throw new Error();setDraft(v=>({...v,companySummary:data.summary||''}));setMessage('サイト情報から会社概要の下書きを作成しました。');}catch{setMessage('サイトを読み取れませんでした。URLを確認してください。');}finally{setSummarizing(false);}};
   return <div className="template-overlay" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="template-card profile-card"><div className="template-head"><div><small>MY PROFILE</small><h2 id="profile-title">使用者情報を登録</h2></div><button onClick={onClose}>×</button></div><label className="profile-scan"><input type="file" accept="image/*" capture="environment" onChange={readCard}/><span>▣</span><div><strong>{reading?'名刺を解析中…':'自分の名刺を撮影・選択'}</strong><small>会社名・氏名・役職・連絡先を自動入力</small></div><b>›</b></label>{message&&<div className="profile-message">{message}</div>}<div className="result-fields profile-fields">{([['会社名','company'],['氏名','name'],['部署','department'],['役職','role'],['メール','email'],['電話番号','phone']] as const).map(([label,key])=><label key={key}><span>{label}</span><input value={draft[key]} onChange={e=>setDraft({...draft,[key]:e.target.value})}/></label>)}</div><div className="website-box"><label><span>会社Webサイト</span><div><input value={draft.website} onChange={e=>setDraft({...draft,website:e.target.value})} placeholder="https://example.jp"/><button onClick={summarize} disabled={summarizing||!draft.website.trim()}>{summarizing?'読取中…':'サイトを要約'}</button></div></label><label><span>会社・事業概要</span><textarea rows={6} value={draft.companySummary} onChange={e=>setDraft({...draft,companySummary:e.target.value})} placeholder="Webサイトから自動作成、または手入力できます"/></label></div><div className="template-actions"><button onClick={onClose}>キャンセル</button><button onClick={()=>onSave(draft)} disabled={!draft.name.trim()||!draft.company.trim()}>プロフィールを保存</button></div></div></div>;
 }

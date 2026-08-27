@@ -8,6 +8,17 @@ function averageConfidence(response:any){
   return values.length?Math.round(values.reduce((sum,value)=>sum+value,0)/values.length*100):80;
 }
 
+function layoutItems(response:any){
+  const items:any[]=[];
+  for(const page of response?.fullTextAnnotation?.pages||[])for(const block of page.blocks||[])for(const paragraph of block.paragraphs||[]){
+    let text='';
+    for(const word of paragraph.words||[])for(const symbol of word.symbols||[]){text+=symbol.text||'';const breakType=symbol.property?.detectedBreak?.type;if(['SPACE','SURE_SPACE','EOL_SURE_SPACE'].includes(breakType))text+=' ';if(breakType==='LINE_BREAK')text+='\n';}
+    const vertices=paragraph.boundingBox?.vertices||[];const xs=vertices.map((v:any)=>Number(v.x||0));const ys=vertices.map((v:any)=>Number(v.y||0));
+    if(text.trim()&&xs.length&&ys.length)items.push({text:text.trim(),x:Math.min(...xs),y:Math.min(...ys),width:Math.max(...xs)-Math.min(...xs),height:Math.max(...ys)-Math.min(...ys),confidence:Math.round(Number(paragraph.confidence||0)*100)});
+  }
+  return items;
+}
+
 export async function POST(request:NextRequest){
   const visionKey=process.env.GOOGLE_CLOUD_VISION_API_KEY;
   const supabaseUrl=process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -24,5 +35,5 @@ export async function POST(request:NextRequest){
   const data=await visionResponse.json();
   const result=data?.responses?.[0];
   if(!visionResponse.ok||result?.error)return NextResponse.json({error:'OCR failed'},{status:502});
-  return NextResponse.json({text:result?.fullTextAnnotation?.text||'',confidence:averageConfidence(result)},{headers:{'cache-control':'no-store'}});
+  return NextResponse.json({text:result?.fullTextAnnotation?.text||'',confidence:averageConfidence(result),layout:layoutItems(result)},{headers:{'cache-control':'no-store'}});
 }
