@@ -182,14 +182,14 @@ export default function Home() {
     const loadData=async()=>{
       const [{data:userData},{data:contactRows},{data:settingsRows},{data:profileRow}]=await Promise.all([
         supabase.auth.getUser(),
-        supabase.from('contacts').select('*').order('created_at',{ascending:false}),
+        supabase.from('contacts').select('company,name,role,email,status'),
         supabase.from('user_settings').select('mail_subject,mail_body').maybeSingle(),
         supabase.from('user_profiles').select('*').maybeSingle(),
       ]);
       if(!userData.user) return;
       const savedSender=userData.user.user_metadata?.mension_sender as Partial<SenderConfig>|undefined;
       if(savedSender)setSender(current=>({...current,...savedSender}));
-      if(contactRows) setCustomers(contactRows.map((row:any)=>({name:row.name||'氏名未確認',initial:(row.name||row.company||'@').slice(0,2),company:row.company||'会社名未確認',role:row.role||'',email:row.email||'',status:row.status||'確認待ち',time:new Date(row.created_at).toLocaleDateString('ja-JP'),tone:'gold'})));
+      if(contactRows) setCustomers(contactRows.map((row:any)=>({name:row.name||'氏名未確認',initial:(row.name||row.company||'@').slice(0,2),company:row.company||'会社名未確認',role:row.role||'',email:row.email||'',status:row.status==='ready'?'未送信':row.status==='needs_review'?'確認待ち':row.status||'確認待ち',time:'登録済み',tone:'gold'})).reverse());
       if(settingsRows) setMailTemplate({subject:settingsRows.mail_subject||'',body:settingsRows.mail_body||''});
       if(profileRow) setProfile({company:profileRow.company||'',name:profileRow.name||'',role:profileRow.role||'',department:profileRow.department||'',email:profileRow.email||'',phone:profileRow.phone||'',website:profileRow.website||'',companySummary:profileRow.company_summary||''});
     };
@@ -225,7 +225,13 @@ export default function Home() {
     const attempts=[{...core,raw_text:scanResult.rawText,confidence:scanResult.confidence,status:scanResult.email?'ready':'needs_review'},core];
     let saveError:any=null;
     for(const payload of attempts){const {error}=await supabase.from('contacts').insert(payload);saveError=error;if(!error)break;if(error.code==='23505')break;}
-    if(saveError){notify('顧客を保存できませんでした',saveError.code==='23505'?'同じメールアドレスの顧客が登録済みです':`保存設定を確認してください（${saveError.code||'DB'}）`);return;}
+    if(saveError?.code==='23505'){
+      const {data:existing,error:readError}=await supabase.from('contacts').select('company,name,role,email,status').ilike('email',scanResult.email).maybeSingle();
+      const visible=existing||{company:scanResult.company,name:scanResult.name,role:scanResult.role,email:scanResult.email,status:'ready'};
+      setCustomers(prev=>[{name:visible.name||'氏名未確認',initial:(visible.name||visible.company||'@').slice(0,2),company:visible.company||'会社名未確認',role:visible.role||'',email:visible.email||'',status:visible.status==='needs_review'?'確認待ち':'未送信',time:'登録済み',tone:'gold'},...prev.filter(customer=>customer.email.toLowerCase()!==scanResult.email.toLowerCase())]);
+      setScanResult(null);setTab('people');notify('登録済みの顧客を表示しました',readError?'この端末の一覧へ復元しました':'既存の顧客データを開きました');return;
+    }
+    if(saveError){notify('顧客を保存できませんでした',`保存設定を確認してください（${saveError.code||'DB'}）`);return;}
     const savedStatus=scanResult.email?'未送信':'確認待ち';
     setCustomers(prev=>[{name:scanResult.name||'氏名未確認',initial:(scanResult.name||scanResult.company||'@').slice(0,2),company:scanResult.company||'会社名未確認',role:scanResult.role||'',email:scanResult.email||'',status:savedStatus,time:'今',tone:'gold'},...prev]);
     setScanResult(null); setTab('people'); notify('顧客データへ保存しました','ユーザー専用の顧客リストへ追加しました');
