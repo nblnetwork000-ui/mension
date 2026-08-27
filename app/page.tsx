@@ -11,7 +11,7 @@ const nav: {id: Tab; label: string; icon: string}[] = [
   {id:'home',label:'HOME',icon:'⌂'},{id:'scan',label:'名刺登録',icon:'▣'},{id:'people',label:'顧客',icon:'♙'},{id:'history',label:'送信履歴',icon:'✉'},{id:'settings',label:'設定',icon:'⚙'}
 ];
 
-type Customer = {name:string;initial:string;company:string;role:string;email:string;status:string;time:string;tone:string};
+type Customer = {id:string;name:string;initial:string;company:string;role:string;department:string;email:string;phone:string;address:string;website:string;status:string;time:string;tone:string;hasCardImage:boolean};
 type ScanResult = {company:string;name:string;role:string;department:string;email:string;phone:string;address:string;website:string;rawText:string;confidence:number};
 type MailTemplate = {subject:string;body:string};
 type UserProfile = {company:string;name:string;role:string;department:string;email:string;phone:string;website:string;companySummary:string};
@@ -60,6 +60,13 @@ async function prepareCardImage(file:File) {
   context.drawImage(bitmap,0,0,width,height);
   bitmap.close();
   return canvas.toDataURL('image/jpeg',.9).split(',')[1];
+}
+
+async function optimizeCardImage(file:File){
+  const bitmap=await createImageBitmap(file);const maxSide=1400;const scale=Math.min(1,maxSide/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  const context=canvas.getContext('2d',{alpha:false});if(!context)throw new Error('Image processing unavailable');context.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
+  return new Promise<Blob>((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Image compression failed')),'image/jpeg',.78));
 }
 
 async function recognizeCard(file:File,client:SupabaseClient|null,onProgress?:(progress:number)=>void){
@@ -157,12 +164,14 @@ export default function Home() {
   const [processing,setProcessing] = useState(false);
   const [ocrProgress,setOcrProgress] = useState(0);
   const [scanResult,setScanResult] = useState<ScanResult|null>(null);
+  const [scanImage,setScanImage]=useState<Blob|null>(null);
   const [customers,setCustomers] = useState<Customer[]>([]);
   const [showTemplate,setShowTemplate] = useState(false);
   const [showProfile,setShowProfile] = useState(false);
   const [showSender,setShowSender] = useState(false);
   const [sender,setSender] = useState<SenderConfig>({provider:'none',email:'',displayName:'',replyTo:'',smtpHost:'',smtpPort:'587'});
   const [composeCustomer,setComposeCustomer]=useState<Customer|null>(null);
+  const [detailCustomer,setDetailCustomer]=useState<Customer|null>(null);
   const [selectedCustomers,setSelectedCustomers]=useState<string[]>([]);
   const [showBulkMail,setShowBulkMail]=useState(false);
   const [mailHistory,setMailHistory]=useState<MailEvent[]>([]);
@@ -201,7 +210,7 @@ export default function Home() {
     const loadData=async()=>{
       const [{data:userData},{data:contactRows},{data:settingsRows},{data:profileRow}]=await Promise.all([
         supabase.auth.getUser(),
-        supabase.from('contacts').select('company,name,role,email,status'),
+        supabase.from('contacts').select('*'),
         supabase.from('user_settings').select('mail_subject,mail_body').maybeSingle(),
         supabase.from('user_profiles').select('*').maybeSingle(),
       ]);
@@ -210,7 +219,7 @@ export default function Home() {
       if(savedSender)setSender(current=>({...current,...savedSender}));
       const savedHistory=userData.user.user_metadata?.mension_mail_history;
       if(Array.isArray(savedHistory))setMailHistory(savedHistory.slice(0,50));
-      if(contactRows) setCustomers(contactRows.map((row:any)=>({name:row.name||'氏名未確認',initial:(row.name||row.company||'@').slice(0,2),company:row.company||'会社名未確認',role:row.role||'',email:row.email||'',status:row.status==='ready'?'未送信':row.status==='needs_review'?'確認待ち':row.status||'確認待ち',time:'登録済み',tone:'gold'})).reverse());
+      if(contactRows) setCustomers(contactRows.map((row:any)=>({id:String(row.id||row.email),name:row.name||'氏名未確認',initial:(row.name||row.company||'@').slice(0,2),company:row.company||'会社名未確認',role:row.role||'',department:row.department||'',email:row.email||'',phone:row.phone||'',address:row.address||'',website:row.website||'',status:row.status==='ready'?'未送信':row.status==='needs_review'?'確認待ち':row.status||'確認待ち',time:'登録済み',tone:'gold',hasCardImage:Boolean(row.id)})).reverse());
       if(settingsRows) setMailTemplate({subject:settingsRows.mail_subject||'',body:settingsRows.mail_body||''});
       if(profileRow) setProfile({company:profileRow.company||'',name:profileRow.name||'',role:profileRow.role||'',department:profileRow.department||'',email:profileRow.email||'',phone:profileRow.phone||'',website:profileRow.website||'',companySummary:profileRow.company_summary||''});
     };
@@ -229,6 +238,7 @@ export default function Home() {
     const file=e.target.files[0];
     setProcessing(true); setOcrProgress(1); setScanResult(null);
     try{
+      setScanImage(await optimizeCardImage(file));
       const result=await recognizeCard(file,supabase,setOcrProgress);
       const parsed=extractCard(result.text,result.confidence,result.layout);
       setScanResult(parsed);
@@ -245,17 +255,26 @@ export default function Home() {
     const core={user_id:userData.user.id,company:scanResult.company,name:scanResult.name,role:scanResult.role,department:scanResult.department,email:scanResult.email||null,phone:scanResult.phone,address:scanResult.address,website:scanResult.website};
     const attempts=[{...core,raw_text:scanResult.rawText,confidence:scanResult.confidence,status:scanResult.email?'ready':'needs_review'},core];
     let saveError:any=null;
-    for(const payload of attempts){const {error}=await supabase.from('contacts').insert(payload);saveError=error;if(!error)break;if(error.code==='23505')break;}
+    let savedId='';
+    for(const payload of attempts){const {data,error}=await supabase.from('contacts').insert(payload).select('id').single();saveError=error;if(!error){savedId=String(data?.id||'');break;}if(error.code==='23505')break;}
     if(saveError?.code==='23505'){
-      const {data:existing,error:readError}=await supabase.from('contacts').select('company,name,role,email,status').ilike('email',scanResult.email).maybeSingle();
+      const {data:existing,error:readError}=await supabase.from('contacts').select('*').ilike('email',scanResult.email).maybeSingle();
       const visible=existing||{company:scanResult.company,name:scanResult.name,role:scanResult.role,email:scanResult.email,status:'ready'};
-      setCustomers(prev=>[{name:visible.name||'氏名未確認',initial:(visible.name||visible.company||'@').slice(0,2),company:visible.company||'会社名未確認',role:visible.role||'',email:visible.email||'',status:visible.status==='needs_review'?'確認待ち':'未送信',time:'登録済み',tone:'gold'},...prev.filter(customer=>customer.email.toLowerCase()!==scanResult.email.toLowerCase())]);
+      setCustomers(prev=>[{id:String(visible.id||visible.email),name:visible.name||'氏名未確認',initial:(visible.name||visible.company||'@').slice(0,2),company:visible.company||'会社名未確認',role:visible.role||'',department:visible.department||'',email:visible.email||'',phone:visible.phone||'',address:visible.address||'',website:visible.website||'',status:visible.status==='needs_review'?'確認待ち':'未送信',time:'登録済み',tone:'gold',hasCardImage:Boolean(visible.id)},...prev.filter(customer=>customer.email.toLowerCase()!==scanResult.email.toLowerCase())]);
       setScanResult(null);setTab('people');notify('登録済みの顧客を表示しました',readError?'この端末の一覧へ復元しました':'既存の顧客データを開きました');return;
     }
     if(saveError){notify('顧客を保存できませんでした',`保存設定を確認してください（${saveError.code||'DB'}）`);return;}
+    if(savedId&&scanImage){const {data}=await supabase.auth.getSession();await fetch(`/api/cards/${encodeURIComponent(savedId)}`,{method:'PUT',headers:{authorization:`Bearer ${data.session?.access_token||''}`,'content-type':'image/jpeg'},body:scanImage});}
     const savedStatus=scanResult.email?'未送信':'確認待ち';
-    setCustomers(prev=>[{name:scanResult.name||'氏名未確認',initial:(scanResult.name||scanResult.company||'@').slice(0,2),company:scanResult.company||'会社名未確認',role:scanResult.role||'',email:scanResult.email||'',status:savedStatus,time:'今',tone:'gold'},...prev]);
+    setCustomers(prev=>[{id:savedId||scanResult.email,name:scanResult.name||'氏名未確認',initial:(scanResult.name||scanResult.company||'@').slice(0,2),company:scanResult.company||'会社名未確認',role:scanResult.role||'',department:scanResult.department,email:scanResult.email||'',phone:scanResult.phone,address:scanResult.address,website:scanResult.website,status:savedStatus,time:'今',tone:'gold',hasCardImage:Boolean(savedId&&scanImage)},...prev]);
+    setScanImage(null);
     setScanResult(null); setTab('people'); notify('顧客データへ保存しました','ユーザー専用の顧客リストへ追加しました');
+  };
+
+  const updateCustomer=async(next:Customer)=>{
+    if(!supabase)return;const {error}=await supabase.from('contacts').update({company:next.company,name:next.name,role:next.role,department:next.department,email:next.email||null,phone:next.phone,address:next.address,website:next.website}).eq('id',next.id);
+    if(error){notify('更新できませんでした','入力内容を確認してください');return;}
+    setCustomers(current=>current.map(customer=>customer.id===next.id?{...next,initial:(next.name||next.company||'@').slice(0,2)}:customer));setDetailCustomer(null);notify('顧客情報を更新しました','名刺の記載情報を保存しました');
   };
 
   const saveTemplate=async(template:MailTemplate)=>{
@@ -332,7 +351,7 @@ export default function Home() {
 
     {tab==='home' && <HomeView go={setTab} notify={notify} customers={customers} />}
     {tab==='scan' && <ScanView processing={processing} progress={ocrProgress} upload={upload} notify={notify} result={scanResult} setResult={setScanResult} save={saveContact} />}
-    {tab==='people' && <PeopleView query={query} setQuery={setQuery} customers={filtered} notify={notify} onCompose={setComposeCustomer} selected={selectedCustomers} setSelected={setSelectedCustomers} onBulk={()=>setShowBulkMail(true)} />}
+    {tab==='people' && <PeopleView query={query} setQuery={setQuery} customers={filtered} notify={notify} onCompose={setComposeCustomer} onDetail={setDetailCustomer} selected={selectedCustomers} setSelected={setSelectedCustomers} onBulk={()=>setShowBulkMail(true)} />}
     {tab==='history' && <HistoryView history={mailHistory} notify={notify} />}
     {tab==='settings' && <SettingsView sender={sender} googleConnected={!!googleAccessToken} sendMode={sendMode} setSendMode={setSendMode} autoGreeting={autoGreeting} setAutoGreeting={setAutoGreeting} signature={signature} setSignature={setSignature} companyContext={companyContext} setCompanyContext={setCompanyContext} notify={notify} onOpenGuide={()=>setShowGuide(true)} onOpenTemplate={()=>setShowTemplate(true)} onOpenProfile={()=>setShowProfile(true)} onOpenSender={()=>setShowSender(true)} />}
 
@@ -342,6 +361,7 @@ export default function Home() {
     {showProfile&&<ProfileEditor value={profile} client={supabase} onClose={()=>setShowProfile(false)} onSave={saveProfile}/>} 
     {showSender&&<SenderEditor value={sender} googleConnected={!!googleAccessToken} onConnectGoogle={connectGoogle} onClose={()=>setShowSender(false)} onSave={saveSender}/>} 
     {composeCustomer&&<MailComposer customer={composeCustomer} template={mailTemplate} sender={sender} connected={!!googleAccessToken} onConnect={connectGoogle} onClose={()=>setComposeCustomer(null)} onSend={sendMail}/>} 
+    {detailCustomer&&<CustomerDetail customer={detailCustomer} client={supabase} onClose={()=>setDetailCustomer(null)} onSave={updateCustomer} onCompose={()=>{setComposeCustomer(detailCustomer);setDetailCustomer(null);}}/>}
     {showBulkMail&&<BulkMailConfirm count={selectedCustomers.length} sender={sender} connected={!!googleAccessToken} onConnect={connectGoogle} onClose={()=>setShowBulkMail(false)} onSend={sendBulkMail}/>} 
     {toast&&<div className="toast" role="status"><span>✓</span><div><strong>{toast.title}</strong><small>{toast.detail}</small></div></div>}
   </main>;
@@ -371,13 +391,21 @@ function ScanView({processing,progress,upload,notify,result,setResult,save}:{pro
   </section>;
 }
 
-function PeopleView({query,setQuery,customers,notify,onCompose,selected,setSelected,onBulk}:{query:string;setQuery:(v:string)=>void;customers:Customer[];notify:(a:string,b:string)=>void;onCompose:(customer:Customer)=>void;selected:string[];setSelected:(value:string[])=>void;onBulk:()=>void}) {
+function PeopleView({query,setQuery,customers,notify,onCompose,onDetail,selected,setSelected,onBulk}:{query:string;setQuery:(v:string)=>void;customers:Customer[];notify:(a:string,b:string)=>void;onCompose:(customer:Customer)=>void;onDetail:(customer:Customer)=>void;selected:string[];setSelected:(value:string[])=>void;onBulk:()=>void}) {
   const toggle=(email:string)=>setSelected(selected.includes(email)?selected.filter(value=>value!==email):[...selected,email]);
   return <section className="screen"><PageHead kicker="CONTACTS" title="顧客リスト" sub={`${customers.length}件のコンタクト`}/><div className="search"><span>⌕</span><input aria-label="顧客を検索" value={query} onChange={e=>setQuery(e.target.value)} placeholder="氏名・会社名・メールで検索"/><button onClick={()=>notify('フィルター','登録日・送信状態・担当者で絞り込めます')}>絞込</button></div><div className="filter-chips"><button className="selected">すべて</button><button>確認待ち 0</button><button>送信済み</button><button>未送信</button></div>
     {customers.length>0&&<div className="bulk-toolbar"><button onClick={()=>setSelected(selected.length===customers.filter(c=>c.email).length?[]:customers.filter(c=>c.email).map(c=>c.email))}>{selected.length?'選択解除':'すべて選択'}</button><span>{selected.length}件選択中</span><button className="bulk-send" disabled={!selected.length} onClick={onBulk}>まとめてメール</button></div>}
-    <div className="people-list selectable">{customers.length===0?<div className="empty-state compact-empty"><span>♙</span><strong>顧客はまだ登録されていません</strong><small>名刺を読み取ると自動で顧客リストに追加されます</small></div>:customers.map(c=><article key={c.email} className={selected.includes(c.email)?'is-selected':''}><button className="contact-check" disabled={!c.email} onClick={()=>toggle(c.email)} aria-label={`${c.name}を選択`}>{selected.includes(c.email)?'✓':''}</button><span className={`initial ${c.tone}`}>{c.initial}</span><div onClick={()=>onCompose(c)}><strong>{c.name}<i className={`dot ${c.status==='確認待ち'?'amber':''}`}/></strong><small>{c.company} ・ {c.role}</small><a>{c.email}</a></div><button onClick={()=>onCompose(c)} aria-label={`${c.name}へメールを作成`}>✉</button></article>)}</div>
+    <div className="people-list selectable">{customers.length===0?<div className="empty-state compact-empty"><span>♙</span><strong>顧客はまだ登録されていません</strong><small>名刺を読み取ると自動で顧客リストに追加されます</small></div>:customers.map(c=><article key={c.id} className={selected.includes(c.email)?'is-selected':''}><button className="contact-check" disabled={!c.email} onClick={()=>toggle(c.email)} aria-label={`${c.name}を選択`}>{selected.includes(c.email)?'✓':''}</button><span className={`initial ${c.tone}`} onClick={()=>onDetail(c)}>{c.initial}</span><div onClick={()=>onDetail(c)}><strong>{c.name}<i className={`dot ${c.status==='確認待ち'?'amber':''}`}/></strong><small>{c.company} ・ {c.role}</small><a>{c.email}</a></div><button onClick={()=>onCompose(c)} aria-label={`${c.name}へメールを作成`}>✉</button></article>)}</div>
     <button className="export-btn" onClick={()=>notify('CSVを書き出しました','顧客データを安全にエクスポートしました')}>↓　CSVエクスポート</button>
   </section>;
+}
+
+function CustomerDetail({customer,client,onClose,onSave,onCompose}:{customer:Customer;client:SupabaseClient|null;onClose:()=>void;onSave:(customer:Customer)=>Promise<void>;onCompose:()=>void}){
+  const [draft,setDraft]=useState(customer);const [editing,setEditing]=useState(false);const [imageUrl,setImageUrl]=useState('');const [imageLoading,setImageLoading]=useState(customer.hasCardImage);const [saving,setSaving]=useState(false);
+  useEffect(()=>{let objectUrl='';if(!customer.hasCardImage||!client){setImageLoading(false);return;}client.auth.getSession().then(async({data})=>{const response=await fetch(`/api/cards/${encodeURIComponent(customer.id)}`,{headers:{authorization:`Bearer ${data.session?.access_token||''}`}});if(response.ok){objectUrl=URL.createObjectURL(await response.blob());setImageUrl(objectUrl);}setImageLoading(false);});return()=>{if(objectUrl)URL.revokeObjectURL(objectUrl);};},[customer.id,customer.hasCardImage,client]);
+  const save=async()=>{setSaving(true);await onSave(draft);setSaving(false);};
+  const fields:Array<[string,keyof Customer]>=[['会社名','company'],['氏名','name'],['部署','department'],['役職・肩書','role'],['メール','email'],['電話番号','phone'],['住所','address'],['Webサイト','website']];
+  return <div className="template-overlay detail-overlay" role="dialog" aria-modal="true"><div className="template-card customer-detail"><div className="template-head"><div><small>CONTACT CARD</small><h2>顧客詳細</h2></div><button onClick={onClose}>×</button></div><div className="card-photo" aria-busy={imageLoading}>{imageLoading?<div className="image-skeleton">名刺画像を読み込み中…</div>:imageUrl?<img src={imageUrl} alt={`${customer.name}の名刺`} loading="lazy" decoding="async"/>:<div className="image-empty"><span>@</span><small>名刺画像は未保存です</small></div>}</div><div className="detail-heading"><div><strong>{draft.name}</strong><small>{draft.company}</small></div><button onClick={()=>setEditing(value=>!value)}>{editing?'表示に戻る':'編集する'}</button></div><div className="detail-fields">{fields.map(([label,key])=><label key={key}><span>{label}</span>{editing?<input type={key==='email'?'email':'text'} value={String(draft[key]||'')} onChange={event=>setDraft({...draft,[key]:event.target.value})}/>:key==='website'&&draft.website?<a href={draft.website.startsWith('http')?draft.website:`https://${draft.website}`} target="_blank" rel="noreferrer">{draft.website}</a>:<strong>{String(draft[key]||'—')}</strong>}</label>)}</div><div className="template-actions"><button onClick={onCompose}>メールを作成</button>{editing?<button onClick={save} disabled={saving}>{saving?'保存中…':'変更を保存'}</button>:<button onClick={onClose}>閉じる</button>}</div></div></div>;
 }
 
 function BulkMailConfirm({count,sender,connected,onConnect,onClose,onSend}:{count:number;sender:SenderConfig;connected:boolean;onConnect:()=>void;onClose:()=>void;onSend:()=>Promise<void>}){
