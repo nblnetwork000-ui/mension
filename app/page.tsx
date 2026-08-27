@@ -59,7 +59,7 @@ function extractCard(text:string,confidence:number): ScanResult {
 }
 
 export default function Home() {
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => typeof window==='undefined' ? null : createClient(), []);
   const [authReady,setAuthReady] = useState(false);
   const [currentUser,setCurrentUser] = useState<string | null>(null);
   const [recovery,setRecovery] = useState(false);
@@ -187,7 +187,7 @@ export default function Home() {
       <div className="top-actions"><button className="notification" aria-label="通知">●</button><button className="avatar" aria-label="アカウント">YT</button></div>
     </header>
 
-    {tab==='home' && <HomeView go={setTab} notify={notify} />}
+    {tab==='home' && <HomeView go={setTab} notify={notify} customers={customers} />}
     {tab==='scan' && <ScanView processing={processing} progress={ocrProgress} upload={upload} notify={notify} result={scanResult} setResult={setScanResult} save={saveContact} />}
     {tab==='people' && <PeopleView query={query} setQuery={setQuery} customers={filtered} notify={notify} />}
     {tab==='history' && <HistoryView notify={notify} />}
@@ -203,7 +203,7 @@ export default function Home() {
 
 function PageHead({kicker,title,sub}:{kicker:string;title:string;sub?:string}) { return <div className="page-head"><p>{kicker}</p><h1>{title}</h1>{sub&&<span>{sub}</span>}</div>; }
 
-function HomeView({go,notify}:{go:(t:Tab)=>void;notify:(a:string,b:string)=>void}) {
+function HomeView({go,notify,customers}:{go:(t:Tab)=>void;notify:(a:string,b:string)=>void;customers:Customer[]}) {
   return <section className="screen home-screen">
     <div className="home-intro"><div><p>MENSION AI</p><h1>名刺から、<br/><em>次の商談をつくる。</em></h1><span>撮影するだけで顧客登録とフォロー文面を準備します</span></div><button className="home-profile" aria-label="アカウント">YT</button></div>
     <article className="capture-card"><div className="capture-aura"/><button className="scan-orb" onClick={()=>go('scan')} aria-label="名刺をスキャン"><span className="scan-mark">▣</span><strong>SCAN</strong><small>名刺を撮影</small></button><div className="capture-copy"><span><i/>AI READY</span><strong>名刺を枠に合わせて撮影</strong><small>会社・氏名・連絡先を自動で読み取ります</small></div></article>
