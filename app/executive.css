@@ -536,6 +536,8 @@ body {
   box-shadow: none !important;
 }
 
+.pending-mail{color:#8d8a82;font-style:normal;font-size:10px;letter-spacing:.08em}.sender-card{max-height:min(88vh,760px);overflow:auto}.sender-lead{margin:-6px 0 18px;color:#99958b;font-size:13px}.provider-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:20px}.provider-grid button{display:flex;align-items:center;gap:10px;min-height:58px;padding:10px 12px;border:1px solid #292824;border-radius:14px;background:#111;color:#ddd;text-align:left}.provider-grid button i{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#1d1c18;color:#c9a85d;font-size:10px;font-style:normal;font-weight:800}.provider-grid button span{flex:1;font-size:11px;font-weight:700}.provider-grid button b{color:#777}.provider-grid button.selected{border-color:#b58e3e;background:linear-gradient(135deg,#201b12,#12110e);box-shadow:inset 0 0 0 1px #5d4826}.provider-grid button.selected b{color:#d3ad62}.sender-fields{display:grid;gap:12px}.sender-fields label{display:grid;gap:7px}.sender-fields label>span{color:#aaa69d;font-size:11px;letter-spacing:.05em}.sender-fields input{width:100%;box-sizing:border-box;padding:13px 14px;border:1px solid #2c2b27;border-radius:12px;background:#0c0c0b;color:#f2eee5;font-size:14px}.smtp-fields{display:grid;grid-template-columns:2fr 1fr;gap:10px}.sender-security{display:flex;align-items:center;gap:10px;margin-top:15px;padding:11px 12px;border-radius:11px;background:#17150f;color:#ba9b5c}.sender-security small{color:#969187;line-height:1.5}
+
 .toggle-row, .ai-range {
   color: var(--exec-text);
   border-color: rgba(255, 255, 255, .07);

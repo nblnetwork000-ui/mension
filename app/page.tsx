@@ -15,6 +15,8 @@ type Customer = {name:string;initial:string;company:string;role:string;email:str
 type ScanResult = {company:string;name:string;role:string;department:string;email:string;phone:string;address:string;website:string;rawText:string;confidence:number};
 type MailTemplate = {subject:string;body:string};
 type UserProfile = {company:string;name:string;role:string;department:string;email:string;phone:string;website:string;companySummary:string};
+type MailProvider = 'none'|'gmail'|'workspace'|'outlook'|'microsoft365'|'smtp';
+type SenderConfig = {provider:MailProvider;email:string;displayName:string;replyTo:string;smtpHost:string;smtpPort:string};
 
 type OcrWorker = {recognize:(image:File)=>Promise<{data:{text:string;confidence:number}}>;terminate:()=>Promise<void>};
 type TesseractBrowser = {createWorker:(languages:string,mode?:number,options?:{logger?:(message:{status:string;progress?:number})=>void;workerPath?:string;corePath?:string;langPath?:string})=>Promise<OcrWorker>};
@@ -112,6 +114,8 @@ export default function Home() {
   const [customers,setCustomers] = useState<Customer[]>([]);
   const [showTemplate,setShowTemplate] = useState(false);
   const [showProfile,setShowProfile] = useState(false);
+  const [showSender,setShowSender] = useState(false);
+  const [sender,setSender] = useState<SenderConfig>({provider:'none',email:'',displayName:'',replyTo:'',smtpHost:'',smtpPort:'587'});
   const [mailTemplate,setMailTemplate] = useState<MailTemplate>({subject:'【ご挨拶】本日はありがとうございました｜{{送信者名}}',body:'{{会社名}}\n{{氏名}} 様\n\n本日は貴重なお時間をいただき、ありがとうございました。\n{{AI生成文}}\n\n今後ともどうぞよろしくお願いいたします。'});
   const [profile,setProfile] = useState<UserProfile>({company:'',name:'',role:'',department:'',email:'',phone:'',website:'',companySummary:''});
   const [sendMode,setSendMode] = useState('confirm');
@@ -151,6 +155,8 @@ export default function Home() {
         supabase.from('user_profiles').select('*').maybeSingle(),
       ]);
       if(!userData.user) return;
+      const savedSender=userData.user.user_metadata?.mension_sender as Partial<SenderConfig>|undefined;
+      if(savedSender)setSender(current=>({...current,...savedSender}));
       if(contactRows) setCustomers(contactRows.map((row:any)=>({name:row.name||'氏名未確認',initial:(row.name||row.company||'@').slice(0,2),company:row.company||'会社名未確認',role:row.role||'',email:row.email||'',status:row.status||'確認待ち',time:new Date(row.created_at).toLocaleDateString('ja-JP'),tone:'gold'})));
       if(settingsRows) setMailTemplate({subject:settingsRows.mail_subject||'',body:settingsRows.mail_body||''});
       if(profileRow) setProfile({company:profileRow.company||'',name:profileRow.name||'',role:profileRow.role||'',department:profileRow.department||'',email:profileRow.email||'',phone:profileRow.phone||'',website:profileRow.website||'',companySummary:profileRow.company_summary||''});
@@ -208,6 +214,13 @@ export default function Home() {
     setProfile(next);setShowProfile(false);notify('使用者プロフィールを保存しました','署名とAI文面生成に利用できます');
   };
 
+  const saveSender=async(next:SenderConfig)=>{
+    if(!supabase)return;
+    const {error}=await supabase.auth.updateUser({data:{mension_sender:next}});
+    if(error){notify('送信元を保存できませんでした','もう一度お試しください');return;}
+    setSender(next);setShowSender(false);notify('送信元メールを切り替えました',`${providerLabel(next.provider)} · ${next.email}`);
+  };
+
   return <main className={`app-shell ${loading?'is-loading':'is-ready'}`}>
     {loading&&<div className="splash" role="status" aria-label="MENSIONを起動しています">
       <div className="splash-glow"/>
@@ -227,12 +240,13 @@ export default function Home() {
     {tab==='scan' && <ScanView processing={processing} progress={ocrProgress} upload={upload} notify={notify} result={scanResult} setResult={setScanResult} save={saveContact} />}
     {tab==='people' && <PeopleView query={query} setQuery={setQuery} customers={filtered} notify={notify} />}
     {tab==='history' && <HistoryView notify={notify} />}
-    {tab==='settings' && <SettingsView sendMode={sendMode} setSendMode={setSendMode} autoGreeting={autoGreeting} setAutoGreeting={setAutoGreeting} signature={signature} setSignature={setSignature} companyContext={companyContext} setCompanyContext={setCompanyContext} notify={notify} onOpenGuide={()=>setShowGuide(true)} onOpenTemplate={()=>setShowTemplate(true)} onOpenProfile={()=>setShowProfile(true)} />}
+    {tab==='settings' && <SettingsView sender={sender} sendMode={sendMode} setSendMode={setSendMode} autoGreeting={autoGreeting} setAutoGreeting={setAutoGreeting} signature={signature} setSignature={setSignature} companyContext={companyContext} setCompanyContext={setCompanyContext} notify={notify} onOpenGuide={()=>setShowGuide(true)} onOpenTemplate={()=>setShowTemplate(true)} onOpenProfile={()=>setShowProfile(true)} onOpenSender={()=>setShowSender(true)} />}
 
     <nav className="bottom-nav" aria-label="メインメニュー">{nav.map(item=><button key={item.id} className={tab===item.id?'active':''} onClick={()=>setTab(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
     {currentUser&&showGuide&&<OnboardingGuide onClose={closeGuide}/>} 
     {showTemplate&&<TemplateEditor value={mailTemplate} onClose={()=>setShowTemplate(false)} onSave={saveTemplate}/>} 
     {showProfile&&<ProfileEditor value={profile} client={supabase} onClose={()=>setShowProfile(false)} onSave={saveProfile}/>} 
+    {showSender&&<SenderEditor value={sender} onClose={()=>setShowSender(false)} onSave={saveSender}/>} 
     {toast&&<div className="toast" role="status"><span>✓</span><div><strong>{toast.title}</strong><small>{toast.detail}</small></div></div>}
   </main>;
 }
@@ -270,10 +284,12 @@ function PeopleView({query,setQuery,customers,notify}:{query:string;setQuery:(v:
 
 function HistoryView({notify}:{notify:(a:string,b:string)=>void}) { return <section className="screen"><PageHead kicker="MAIL ACTIVITY" title="送信履歴" sub="送信履歴はまだありません"/><div className="mail-overview"><div><small>THIS MONTH</small><strong>0<em>通</em></strong><span>名刺登録から始めましょう</span></div><div className="ring"><b>—</b><small>SUCCESS</small></div></div><div className="timeline"><h3>履歴</h3><div className="empty-state compact-empty"><span>✉</span><strong>メールはまだ送信されていません</strong><small>送信すると、この画面から結果を確認できます</small></div></div></section>; }
 
-function SettingsView({sendMode,setSendMode,autoGreeting,setAutoGreeting,signature,setSignature,companyContext,setCompanyContext,notify,onOpenGuide,onOpenTemplate,onOpenProfile}:{sendMode:string;setSendMode:(v:string)=>void;autoGreeting:boolean;setAutoGreeting:(v:boolean)=>void;signature:boolean;setSignature:(v:boolean)=>void;companyContext:boolean;setCompanyContext:(v:boolean)=>void;notify:(a:string,b:string)=>void;onOpenGuide:()=>void;onOpenTemplate:()=>void;onOpenProfile:()=>void}) { return <section className="screen settings"><PageHead kicker="PREFERENCES" title="設定" sub="あなたらしいフォローを自動化"/>
+function providerLabel(provider:MailProvider){return ({none:'未設定',gmail:'Gmail',workspace:'Google Workspace',outlook:'Outlook.com',microsoft365:'Microsoft 365',smtp:'独自ドメイン / SMTP'})[provider];}
+
+function SettingsView({sender,sendMode,setSendMode,autoGreeting,setAutoGreeting,signature,setSignature,companyContext,setCompanyContext,notify,onOpenGuide,onOpenTemplate,onOpenProfile,onOpenSender}:{sender:SenderConfig;sendMode:string;setSendMode:(v:string)=>void;autoGreeting:boolean;setAutoGreeting:(v:boolean)=>void;signature:boolean;setSignature:(v:boolean)=>void;companyContext:boolean;setCompanyContext:(v:boolean)=>void;notify:(a:string,b:string)=>void;onOpenGuide:()=>void;onOpenTemplate:()=>void;onOpenProfile:()=>void;onOpenSender:()=>void}) { return <section className="screen settings"><PageHead kicker="PREFERENCES" title="設定" sub="あなたらしいフォローを自動化"/>
     <button className="guide-setting" onClick={onOpenGuide}><span>?</span><div><strong>MENSIONの使い方</strong><small>名刺登録からメール送信までを確認</small></div><b>見る</b></button>
     <div className="settings-group"><h3>送信モード</h3><p>名刺読み取り後の動作を選択</p><div className="mode-select">{[['auto','完全自動','読み取り後すぐ送信'],['confirm','確認して送信','内容を確認してから'],['off','送信なし','リスト登録のみ']].map(m=><button key={m[0]} onClick={()=>setSendMode(m[0])} className={sendMode===m[0]?'selected':''}><i>{sendMode===m[0]?'●':'○'}</i><span><strong>{m[1]}</strong><small>{m[2]}</small></span></button>)}</div></div>
-    <button className="setting-row" onClick={()=>notify('送信元メール','Google Workspaceが正常に接続されています')}><span className="setting-icon">@</span><div><strong>送信元メール</strong><small>taro@premium-sales.jp</small></div><em className="connected">接続済み</em><b>›</b></button>
+    <button className="setting-row" onClick={onOpenSender}><span className="setting-icon">@</span><div><strong>送信元メール</strong><small>{sender.email||'メールサービスを選択してください'} · {providerLabel(sender.provider)}</small></div><em className={sender.provider==='none'?'pending-mail':'connected'}>{sender.provider==='none'?'未設定':'設定済み'}</em><b>›</b></button>
     <button className="setting-row" onClick={onOpenTemplate}><span className="setting-icon">T</span><div><strong>メールテンプレート</strong><small>件名・本文・差し込み変数を編集</small></div><b>›</b></button>
     <button className="profile-setting" onClick={onOpenProfile}><span className="setting-icon">ME</span><div><strong>使用者プロフィール</strong><small>自分の名刺・会社サイトから簡単登録</small></div><b>›</b></button>
     <div className="settings-group compact"><h3>AI生成設定</h3><Toggle label="相手企業に合わせて文面を最適化" value={companyContext} set={setCompanyContext}/><Toggle label="宛名・冒頭挨拶を自動生成" value={autoGreeting} set={setAutoGreeting}/><Toggle label="署名を自動で追加" value={signature} set={setSignature}/><button className="ai-range" onClick={()=>notify('企業別AI生成','業種・事業内容・役職・面談メモを文面へ反映します')}><span>AI</span><div><strong>企業情報の反映範囲</strong><small>業種・事業内容・役職・面談メモ</small></div><b>›</b></button></div>
@@ -287,6 +303,12 @@ function TemplateEditor({value,onClose,onSave}:{value:MailTemplate;onClose:()=>v
   const [draft,setDraft]=useState(value);
   const insert=(token:string)=>setDraft(v=>({...v,body:`${v.body}${v.body.endsWith('\n')?'':'\n'}${token}`}));
   return <div className="template-overlay" role="dialog" aria-modal="true" aria-labelledby="template-title"><div className="template-card"><div className="template-head"><div><small>MAIL TEMPLATE</small><h2 id="template-title">メール文面を編集</h2></div><button onClick={onClose} aria-label="閉じる">×</button></div><label><span>件名</span><input value={draft.subject} onChange={e=>setDraft({...draft,subject:e.target.value})}/></label><label><span>本文</span><textarea rows={12} value={draft.body} onChange={e=>setDraft({...draft,body:e.target.value})}/></label><div className="template-vars"><small>差し込み変数</small><div>{['{{会社名}}','{{氏名}}','{{役職}}','{{AI生成文}}','{{送信者名}}'].map(v=><button key={v} onClick={()=>insert(v)}>{v}</button>)}</div></div><div className="template-actions"><button onClick={onClose}>キャンセル</button><button onClick={()=>onSave(draft)} disabled={!draft.subject.trim()||!draft.body.trim()}>この内容を保存</button></div></div></div>;
+}
+
+function SenderEditor({value,onClose,onSave}:{value:SenderConfig;onClose:()=>void;onSave:(v:SenderConfig)=>void}){
+  const [draft,setDraft]=useState(value);
+  const providers:Array<[MailProvider,string,string]>=[['gmail','G','Gmail'],['workspace','GW','Google Workspace'],['outlook','O','Outlook.com'],['microsoft365','M365','Microsoft 365'],['smtp','SMTP','独自ドメイン / SMTP']];
+  return <div className="template-overlay" role="dialog" aria-modal="true" aria-labelledby="sender-title"><div className="template-card sender-card"><div className="template-head"><div><small>MAIL CONNECTION</small><h2 id="sender-title">送信元メールを選択</h2></div><button onClick={onClose} aria-label="閉じる">×</button></div><p className="sender-lead">利用するメールサービスをいつでも切り替えられます。</p><div className="provider-grid">{providers.map(([id,mark,label])=><button key={id} className={draft.provider===id?'selected':''} onClick={()=>setDraft({...draft,provider:id})}><i>{mark}</i><span>{label}</span><b>{draft.provider===id?'✓':'›'}</b></button>)}</div><div className="sender-fields"><label><span>送信者名</span><input value={draft.displayName} onChange={e=>setDraft({...draft,displayName:e.target.value})} placeholder="山田 太郎"/></label><label><span>送信元メールアドレス</span><input type="email" value={draft.email} onChange={e=>setDraft({...draft,email:e.target.value})} placeholder="you@company.jp"/></label><label><span>返信先メールアドレス（任意）</span><input type="email" value={draft.replyTo} onChange={e=>setDraft({...draft,replyTo:e.target.value})} placeholder="reply@company.jp"/></label>{draft.provider==='smtp'&&<div className="smtp-fields"><label><span>SMTPサーバー</span><input value={draft.smtpHost} onChange={e=>setDraft({...draft,smtpHost:e.target.value})} placeholder="smtp.example.jp"/></label><label><span>ポート</span><input inputMode="numeric" value={draft.smtpPort} onChange={e=>setDraft({...draft,smtpPort:e.target.value})} placeholder="587"/></label></div>}</div><div className="sender-security"><span>♢</span><small>パスワードやOAuthトークンはこの画面・ブラウザには保存しません。</small></div><div className="template-actions"><button onClick={onClose}>キャンセル</button><button onClick={()=>onSave(draft)} disabled={draft.provider==='none'||!draft.email.includes('@')||!draft.displayName.trim()}>送信元として保存</button></div></div></div>;
 }
 
 function ProfileEditor({value,client,onClose,onSave}:{value:UserProfile;client:SupabaseClient|null;onClose:()=>void;onSave:(v:UserProfile)=>void}) {
