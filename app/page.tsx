@@ -16,6 +16,32 @@ type ScanResult = {company:string;name:string;role:string;department:string;emai
 type MailTemplate = {subject:string;body:string};
 type UserProfile = {company:string;name:string;role:string;department:string;email:string;phone:string;website:string;companySummary:string};
 
+type OcrWorker = {recognize:(image:File)=>Promise<{data:{text:string;confidence:number}}>;terminate:()=>Promise<void>};
+type TesseractBrowser = {createWorker:(languages:string,mode?:number,options?:{logger?:(message:{status:string;progress?:number})=>void;workerPath?:string;corePath?:string;langPath?:string})=>Promise<OcrWorker>};
+
+async function getBrowserOcr(): Promise<TesseractBrowser> {
+  const browserWindow=window as typeof window & {Tesseract?:TesseractBrowser;__mensionOcrLoading?:Promise<void>};
+  if(browserWindow.Tesseract)return browserWindow.Tesseract;
+  if(!browserWindow.__mensionOcrLoading){
+    browserWindow.__mensionOcrLoading=new Promise((resolve,reject)=>{
+      const script=document.createElement('script');
+      script.src='/vendor/tesseract.min.js';
+      script.async=true;
+      script.onload=()=>resolve();
+      script.onerror=()=>reject(new Error('OCR engine could not load'));
+      document.head.appendChild(script);
+    });
+  }
+  await browserWindow.__mensionOcrLoading;
+  if(!browserWindow.Tesseract)throw new Error('OCR engine is unavailable');
+  return browserWindow.Tesseract;
+}
+
+async function createOcrWorker(logger?:(message:{status:string;progress?:number})=>void){
+  const engine=await getBrowserOcr();
+  return engine.createWorker('jpn+eng',1,{logger,workerPath:'/vendor/worker.min.js',corePath:'/vendor/core',langPath:'https://tessdata.projectnaptha.com/4.0.0'});
+}
+
 const emptyScan: ScanResult = {company:'',name:'',role:'',department:'',email:'',phone:'',address:'',website:'',rawText:'',confidence:0};
 
 function extractCard(text:string,confidence:number): ScanResult {
@@ -106,8 +132,7 @@ export default function Home() {
     const file=e.target.files[0];
     setProcessing(true); setOcrProgress(1); setScanResult(null);
     try{
-      const {createWorker}=await import('tesseract.js');
-      const worker=await createWorker('jpn+eng',1,{logger:m=>{if(m.status==='recognizing text')setOcrProgress(Math.round((m.progress||0)*100));}});
+      const worker=await createOcrWorker(m=>{if(m.status==='recognizing text')setOcrProgress(Math.round((m.progress||0)*100));});
       const result=await worker.recognize(file);
       await worker.terminate();
       const parsed=extractCard(result.data.text,result.data.confidence);
@@ -230,7 +255,7 @@ function TemplateEditor({value,onClose,onSave}:{value:MailTemplate;onClose:()=>v
 
 function ProfileEditor({value,onClose,onSave}:{value:UserProfile;onClose:()=>void;onSave:(v:UserProfile)=>void}) {
   const [draft,setDraft]=useState(value);const [reading,setReading]=useState(false);const [summarizing,setSummarizing]=useState(false);const [message,setMessage]=useState('');
-  const readCard=async(e:ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;setReading(true);setMessage('名刺を読み取っています…');try{const {createWorker}=await import('tesseract.js');const worker=await createWorker('jpn+eng');const result=await worker.recognize(file);await worker.terminate();const card=extractCard(result.data.text,result.data.confidence);setDraft(v=>({...v,company:card.company,name:card.name,role:card.role,department:card.department,email:card.email,phone:card.phone,website:card.website||v.website}));setMessage('名刺の内容を入力しました。確認して保存してください。');}catch{setMessage('読み取れませんでした。明るい場所で撮り直してください。');}finally{setReading(false);e.target.value='';}};
+  const readCard=async(e:ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;setReading(true);setMessage('名刺を読み取っています…');try{const worker=await createOcrWorker();const result=await worker.recognize(file);await worker.terminate();const card=extractCard(result.data.text,result.data.confidence);setDraft(v=>({...v,company:card.company,name:card.name,role:card.role,department:card.department,email:card.email,phone:card.phone,website:card.website||v.website}));setMessage('名刺の内容を入力しました。確認して保存してください。');}catch{setMessage('読み取れませんでした。明るい場所で撮り直してください。');}finally{setReading(false);e.target.value='';}};
   const summarize=async()=>{if(!draft.website.trim())return;setSummarizing(true);setMessage('会社サイトを確認しています…');try{const res=await fetch(`/api/site-summary?url=${encodeURIComponent(draft.website)}`);const data=await res.json();if(!res.ok)throw new Error();setDraft(v=>({...v,companySummary:data.summary||''}));setMessage('サイト情報から会社概要の下書きを作成しました。');}catch{setMessage('サイトを読み取れませんでした。URLを確認してください。');}finally{setSummarizing(false);}};
   return <div className="template-overlay" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="template-card profile-card"><div className="template-head"><div><small>MY PROFILE</small><h2 id="profile-title">使用者情報を登録</h2></div><button onClick={onClose}>×</button></div><label className="profile-scan"><input type="file" accept="image/*" capture="environment" onChange={readCard}/><span>▣</span><div><strong>{reading?'名刺を解析中…':'自分の名刺を撮影・選択'}</strong><small>会社名・氏名・役職・連絡先を自動入力</small></div><b>›</b></label>{message&&<div className="profile-message">{message}</div>}<div className="result-fields profile-fields">{([['会社名','company'],['氏名','name'],['部署','department'],['役職','role'],['メール','email'],['電話番号','phone']] as const).map(([label,key])=><label key={key}><span>{label}</span><input value={draft[key]} onChange={e=>setDraft({...draft,[key]:e.target.value})}/></label>)}</div><div className="website-box"><label><span>会社Webサイト</span><div><input value={draft.website} onChange={e=>setDraft({...draft,website:e.target.value})} placeholder="https://example.jp"/><button onClick={summarize} disabled={summarizing||!draft.website.trim()}>{summarizing?'読取中…':'サイトを要約'}</button></div></label><label><span>会社・事業概要</span><textarea rows={6} value={draft.companySummary} onChange={e=>setDraft({...draft,companySummary:e.target.value})} placeholder="Webサイトから自動作成、または手入力できます"/></label></div><div className="template-actions"><button onClick={onClose}>キャンセル</button><button onClick={()=>onSave(draft)} disabled={!draft.name.trim()||!draft.company.trim()}>プロフィールを保存</button></div></div></div>;
 }
