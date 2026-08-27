@@ -550,6 +550,41 @@ body {
   color: #8d805f;
 }
 
+.profile-setting {
+  width: 100%;
+  min-height: 74px;
+  margin: 14px 0;
+  padding: 0 17px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--exec-line);
+  border-radius: 18px;
+  background: linear-gradient(135deg, #171719, #0b0b0c);
+  color: var(--exec-text);
+  text-align: left;
+}
+
+.profile-setting div {
+  display: flex;
+  flex-direction: column;
+  padding-left: 11px;
+}
+
+.profile-setting strong {
+  font-size: 9px;
+}
+
+.profile-setting small {
+  margin-top: 4px;
+  color: var(--exec-muted);
+  font-size: 7px;
+}
+
+.profile-setting b {
+  margin-left: auto;
+  color: #a99470;
+}
+
 .bottom-nav {
   height: calc(76px + env(safe-area-inset-bottom));
   width: min(100%, 720px);
@@ -582,6 +617,287 @@ body {
   border: 1px solid var(--exec-line);
 }
 
+.scan-result {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid var(--exec-line);
+  border-radius: 24px;
+  background: #111113;
+}
+
+.scan-result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.scan-result-head small {
+  color: #9c8049;
+  font-size: 6px;
+  letter-spacing: .16em;
+}
+
+.scan-result-head h3 {
+  margin: 6px 0 0;
+  color: #f5f1e9;
+  font-size: 15px;
+}
+
+.scan-result-head button, .template-head button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: #1d1d1f;
+  color: #aaa69e;
+}
+
+.result-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+
+.result-fields label, .template-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.result-fields label span, .template-card label span {
+  color: #918d84;
+  font-size: 7px;
+}
+
+.result-fields input, .template-card input, .template-card textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 12px;
+  background: #09090a;
+  color: #f6f2e9;
+  outline: 0;
+  padding: 11px 12px;
+  font-size: 9px;
+}
+
+.result-fields input:focus, .template-card input:focus, .template-card textarea:focus {
+  border-color: rgba(213, 181, 110, .65);
+}
+
+.save-contact {
+  width: 100%;
+  height: 49px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(110deg, #b78b40, #efd58f);
+  color: #11100d;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.result-note {
+  display: block;
+  margin-top: 9px;
+  color: #716e68;
+  font-size: 6px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.template-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 750;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(2, 2, 3, .84);
+  backdrop-filter: blur(14px);
+}
+
+.template-card {
+  width: min(100%, 520px);
+  max-height: calc(100vh - 30px);
+  overflow: auto;
+  padding: 25px;
+  border: 1px solid var(--exec-line);
+  border-radius: 26px;
+  background: #111113;
+  box-shadow: 0 30px 80px #000b;
+}
+
+.template-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.template-head small {
+  color: #9d814b;
+  font-size: 6px;
+  letter-spacing: .2em;
+}
+
+.template-head h2 {
+  margin: 6px 0 0;
+  font-size: 22px;
+}
+
+.template-card label + label {
+  margin-top: 14px;
+}
+
+.template-card textarea {
+  resize: vertical;
+  min-height: 210px;
+  line-height: 1.8;
+}
+
+.template-vars {
+  margin-top: 15px;
+}
+
+.template-vars > small {
+  color: #918d84;
+  font-size: 7px;
+}
+
+.template-vars > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.template-vars button {
+  border: 1px solid var(--exec-line);
+  border-radius: 999px;
+  background: #0a0a0b;
+  color: var(--exec-gold);
+  padding: 7px 9px;
+  font-size: 7px;
+}
+
+.template-actions {
+  display: grid;
+  grid-template-columns: .7fr 1.3fr;
+  gap: 8px;
+  margin-top: 21px;
+}
+
+.template-actions button {
+  height: 47px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 13px;
+  background: transparent;
+  color: #a6a198;
+  font-size: 9px;
+}
+
+.template-actions button:last-child {
+  border: 0;
+  background: linear-gradient(110deg, #b78b40, #efd58f);
+  color: #11100d;
+  font-weight: 800;
+}
+
+.template-actions button:disabled {
+  opacity: .45;
+}
+
+.profile-scan {
+  min-height: 76px;
+  display: grid !important;
+  grid-template-columns: 38px 1fr auto;
+  align-items: center;
+  padding: 0 14px;
+  border: 1px solid var(--exec-line);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(209, 174, 96, .09), #0a0a0b);
+  cursor: pointer;
+}
+
+.profile-scan input {
+  display: none;
+}
+
+.profile-scan > span {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(213, 181, 110, .44);
+  border-radius: 12px;
+  color: var(--exec-gold);
+}
+
+.profile-scan div {
+  display: flex;
+  flex-direction: column;
+  padding-left: 11px;
+}
+
+.profile-scan strong {
+  font-size: 9px;
+}
+
+.profile-scan small {
+  margin-top: 4px;
+  color: var(--exec-muted);
+  font-size: 7px;
+}
+
+.profile-scan b {
+  color: #8c7954;
+}
+
+.profile-message {
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: rgba(205, 168, 85, .09);
+  color: #d7bd82;
+  font-size: 7px;
+  line-height: 1.6;
+}
+
+.profile-fields {
+  margin-top: 16px;
+}
+
+.website-box {
+  margin-top: 17px;
+  padding-top: 17px;
+  border-top: 1px solid rgba(255, 255, 255, .07);
+}
+
+.website-box label + label {
+  margin-top: 14px;
+}
+
+.website-box label > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px;
+}
+
+.website-box label > div button {
+  border: 0;
+  border-radius: 12px;
+  background: #d2b26a;
+  color: #111;
+  padding: 0 13px;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.website-box label > div button:disabled {
+  opacity: .45;
+}
+
 @media (max-width: 480px) {
   .screen {
     padding: 27px 17px 42px;
@@ -611,5 +927,22 @@ body {
 
   .kpi-grid article, .kpi-grid .attention {
     padding-inline: 10px;
+  }
+
+  .result-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .template-overlay {
+    padding: 0;
+  }
+
+  .template-card {
+    width: 100%;
+    max-height: 100vh;
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    padding: 23px 18px;
   }
 }
