@@ -303,7 +303,8 @@ export default function Home() {
   };
 
   const connectGoogle=async()=>{
-    const clientId=process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID;
+    let clientId='';
+    try{const config=await fetch('/api/google-config',{cache:'no-store'}).then(response=>response.json());clientId=String(config.clientId||'');}catch{}
     if(!clientId){notify('Google接続の準備中です','OAuthクライアントIDを設定すると接続できます');return;}
     try{const google=await loadGoogleIdentity();google.accounts.oauth2.initTokenClient({client_id:clientId,scope:'https://www.googleapis.com/auth/gmail.send',callback:(response:any)=>{if(response.access_token){setGoogleAccessToken(response.access_token);notify('Googleメールを接続しました','このブラウザで安全に送信できます');}else notify('Google接続を完了できませんでした','もう一度お試しください');}}).requestAccessToken({prompt:'consent'});}catch{notify('Google接続を開始できませんでした','通信状態を確認してください');}
   };
