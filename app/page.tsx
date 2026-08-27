@@ -85,15 +85,28 @@ async function recognizeCard(file:File,client:SupabaseClient|null,onProgress?:(p
 const emptyScan: ScanResult = {company:'',name:'',role:'',department:'',email:'',phone:'',address:'',website:'',rawText:'',confidence:0};
 
 function extractCard(text:string,confidence:number): ScanResult {
-  const lines=text.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+  const lines=text.split(/\r?\n/).map(v=>v.replace(/^[^\p{L}\p{N}〒+]+/u,'').replace(/\s+/g,' ').trim()).filter(Boolean);
   const email=text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]??'';
-  const phone=text.match(/(?:\+?81[-\s]?)?(?:0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4})/)?.[0]??'';
+  const phoneMatches=[...text.matchAll(/(?<!\d)(?:\+81[-\s]?)?0\d{1,4}[-\s]\d{1,4}[-\s]\d{3,4}(?!\d)/g)].map(match=>match[0]);
+  const phone=phoneMatches.find(value=>value.replace(/\D/g,'').length>=10)??'';
   const website=text.match(/(?:https?:\/\/|www\.)[^\s]+/i)?.[0]?.replace(/[),。]+$/,'')??'';
   const company=lines.find(v=>/(株式会社|有限会社|合同会社|Inc\.?|LLC|Corporation|Co\.,?\s*Ltd)/i.test(v))??lines[0]??'';
   const role=lines.find(v=>/(代表|取締役|社長|部長|課長|主任|Manager|Director|CEO|President)/i.test(v))??'';
   const department=lines.find(v=>/(事業部|営業部|企画部|開発部|部門|Department|Division)/i.test(v))??'';
   const excluded=new Set([company,role,department,email,phone,website]);
-  const name=lines.find(v=>!excluded.has(v)&&/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\s・]{3,18}$/u.test(v))??'';
+  const roleIndex=lines.indexOf(role);
+  const nameCandidates=lines.map((value,index)=>{
+    const cleaned=value.replace(/^(代表取締役|代表社員|代表|取締役|社長|部長|課長|主任)\s*/,'').trim();
+    if(!cleaned||excluded.has(value)||/(会社|法人|サロン|協会|事務所|研究所|センター|〒|都|道|府|県|市|区|町|村)/.test(cleaned)||/@|\d{3,}/.test(cleaned)||!/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\s・]{2,18}$/u.test(cleaned))return null;
+    let score=0;
+    if(roleIndex>=0&&index>roleIndex&&index<=roleIndex+2)score+=12;
+    if(/[\s・]/.test(cleaned))score+=5;
+    if(/^[\p{Script=Han}\s・]+$/u.test(cleaned))score+=5;
+    if(cleaned.replace(/[\s・]/g,'').length>=3&&cleaned.replace(/[\s・]/g,'').length<=8)score+=3;
+    if(index===0)score-=2;
+    return {value:cleaned,score};
+  }).filter((candidate):candidate is {value:string;score:number}=>candidate!==null).sort((a,b)=>b.score-a.score);
+  const name=nameCandidates[0]?.value??'';
   const address=lines.find(v=>/(都|道|府|県).*(市|区|町|村)|〒\s*\d{3}-?\d{4}/.test(v))??'';
   return {company,name,role,department,email,phone,address,website,rawText:text,confidence:Math.round(confidence)};
 }
@@ -189,10 +202,13 @@ export default function Home() {
     if(!supabase||!scanResult)return;
     const {data:userData}=await supabase.auth.getUser();
     if(!userData.user){notify('保存できません','もう一度ログインしてください');return;}
-    const payload={user_id:userData.user.id,company:scanResult.company,name:scanResult.name,role:scanResult.role,department:scanResult.department,email:scanResult.email||null,phone:scanResult.phone,address:scanResult.address,website:scanResult.website,raw_text:scanResult.rawText,confidence:scanResult.confidence,status:scanResult.email?'未送信':'確認待ち'};
-    const {data,error}=await supabase.from('contacts').insert(payload).select().single();
-    if(error){notify('顧客を保存できませんでした',error.code==='23505'?'同じメールアドレスの顧客が登録済みです':'入力内容を確認してください');return;}
-    setCustomers(prev=>[{name:data.name||'氏名未確認',initial:(data.name||data.company||'@').slice(0,2),company:data.company||'会社名未確認',role:data.role||'',email:data.email||'',status:data.status,time:'今',tone:'gold'},...prev]);
+    const core={user_id:userData.user.id,company:scanResult.company,name:scanResult.name,role:scanResult.role,department:scanResult.department,email:scanResult.email||null,phone:scanResult.phone,address:scanResult.address,website:scanResult.website};
+    const attempts=[{...core,raw_text:scanResult.rawText,confidence:scanResult.confidence,status:scanResult.email?'ready':'needs_review'},core];
+    let saveError:any=null;
+    for(const payload of attempts){const {error}=await supabase.from('contacts').insert(payload);saveError=error;if(!error)break;if(error.code==='23505')break;}
+    if(saveError){notify('顧客を保存できませんでした',saveError.code==='23505'?'同じメールアドレスの顧客が登録済みです':`保存設定を確認してください（${saveError.code||'DB'}）`);return;}
+    const savedStatus=scanResult.email?'未送信':'確認待ち';
+    setCustomers(prev=>[{name:scanResult.name||'氏名未確認',initial:(scanResult.name||scanResult.company||'@').slice(0,2),company:scanResult.company||'会社名未確認',role:scanResult.role||'',email:scanResult.email||'',status:savedStatus,time:'今',tone:'gold'},...prev]);
     setScanResult(null); setTab('people'); notify('顧客データへ保存しました','ユーザー専用の顧客リストへ追加しました');
   };
 
