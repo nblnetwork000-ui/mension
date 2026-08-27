@@ -1,0 +1,17 @@
+{
+  "name": "MENSION（メンション）",
+  "short_name": "MENSION",
+  "description": "名刺を撮るだけ。連絡先登録からお礼メールまでAIが完了。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080809",
+  "theme_color": "#080809",
+  "icons": [
+    {
+      "src": "/mension-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -17,6 +17,18 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'MENSION（メンション）',
   description: '名刺を撮るだけ。連絡先登録からお礼メールまでAIが完了。',
+  manifest: '/manifest.webmanifest',
+  themeColor: '#080809',
+  icons: {
+    icon: '/mension-icon.svg',
+    shortcut: '/mension-icon.svg',
+    apple: '/apple-touch-icon.png',
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'MENSION',
+  },
 };
 
 export default function RootLayout({
