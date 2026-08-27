@@ -1,0 +1,22 @@
+.is-ready > .bottom-nav {
+  animation: navEnter 0.48s cubic-bezier(.2, .75, .2, 1) both;
+}
+
+@keyframes navEnter {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-ready > .bottom-nav {
+    animation-duration: .01ms !important;
+    animation-delay: 0ms !important;
+  }
+}
