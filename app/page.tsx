@@ -163,6 +163,8 @@ export default function Home() {
   const [showSender,setShowSender] = useState(false);
   const [sender,setSender] = useState<SenderConfig>({provider:'none',email:'',displayName:'',replyTo:'',smtpHost:'',smtpPort:'587'});
   const [composeCustomer,setComposeCustomer]=useState<Customer|null>(null);
+  const [selectedCustomers,setSelectedCustomers]=useState<string[]>([]);
+  const [showBulkMail,setShowBulkMail]=useState(false);
   const [mailHistory,setMailHistory]=useState<MailEvent[]>([]);
   const [googleAccessToken,setGoogleAccessToken]=useState('');
   const [mailTemplate,setMailTemplate] = useState<MailTemplate>({subject:'【ご挨拶】本日はありがとうございました｜{{送信者名}}',body:'{{会社名}}\n{{氏名}} 様\n\n本日は貴重なお時間をいただき、ありがとうございました。\n{{AI生成文}}\n\n今後ともどうぞよろしくお願いいたします。'});
@@ -287,14 +289,30 @@ export default function Home() {
     try{const google=await loadGoogleIdentity();google.accounts.oauth2.initTokenClient({client_id:clientId,scope:'https://www.googleapis.com/auth/gmail.send',callback:(response:any)=>{if(response.access_token){setGoogleAccessToken(response.access_token);notify('Googleメールを接続しました','このブラウザで安全に送信できます');}else notify('Google接続を完了できませんでした','もう一度お試しください');}}).requestAccessToken({prompt:'consent'});}catch{notify('Google接続を開始できませんでした','通信状態を確認してください');}
   };
 
-  const sendMail=async(subject:string,body:string)=>{
-    if(!composeCustomer||!googleAccessToken||!['gmail','workspace'].includes(sender.provider))throw new Error('not connected');
-    const response=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{method:'POST',headers:{authorization:`Bearer ${googleAccessToken}`,'content-type':'application/json'},body:JSON.stringify({raw:gmailRawMessage(`${sender.displayName} <${sender.email}>`,composeCustomer.email,sender.replyTo,subject,body)})});
+  const sendMailTo=async(customer:Customer,subject:string,body:string)=>{
+    if(!googleAccessToken||!['gmail','workspace'].includes(sender.provider))throw new Error('not connected');
+    const response=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{method:'POST',headers:{authorization:`Bearer ${googleAccessToken}`,'content-type':'application/json'},body:JSON.stringify({raw:gmailRawMessage(`${sender.displayName} <${sender.email}>`,customer.email,sender.replyTo,subject,body)})});
     if(!response.ok)throw new Error('send failed');
-    const event:MailEvent={id:crypto.randomUUID(),to:composeCustomer.email,name:composeCustomer.name,company:composeCustomer.company,subject,status:'送信済み',sentAt:new Date().toISOString()};
+    return {id:crypto.randomUUID(),to:customer.email,name:customer.name,company:customer.company,subject,status:'送信済み' as const,sentAt:new Date().toISOString()};
+  };
+
+  const sendMail=async(subject:string,body:string)=>{
+    if(!composeCustomer)throw new Error('customer missing');
+    const event=await sendMailTo(composeCustomer,subject,body);
     const next=[event,...mailHistory].slice(0,50);setMailHistory(next);setComposeCustomer(null);
     if(supabase)await supabase.auth.updateUser({data:{mension_mail_history:next}});
     notify('メールを送信しました',`${event.name} 様への送信が完了しました`);
+  };
+
+  const sendBulkMail=async()=>{
+    const targets=customers.filter(customer=>selectedCustomers.includes(customer.email)&&customer.email);
+    if(!targets.length)throw new Error('targets missing');
+    const replace=(value:string,customer:Customer)=>value.replaceAll('{{会社名}}',customer.company).replaceAll('{{氏名}}',customer.name).replaceAll('{{役職}}',customer.role).replaceAll('{{送信者名}}',sender.displayName).replaceAll('{{AI生成文}}',`${customer.company||'貴社'}でのお取り組みについて、ぜひ改めてお話を伺えれば幸いです。`);
+    const events:MailEvent[]=[];
+    for(const customer of targets)events.push(await sendMailTo(customer,replace(mailTemplate.subject,customer),replace(mailTemplate.body,customer)));
+    const next=[...events,...mailHistory].slice(0,50);setMailHistory(next);setSelectedCustomers([]);setShowBulkMail(false);
+    if(supabase)await supabase.auth.updateUser({data:{mension_mail_history:next}});
+    notify('まとめて送信しました',`${events.length}件の送信が完了しました`);
   };
 
   return <main className={`app-shell ${loading?'is-loading':'is-ready'}`}>
@@ -314,7 +332,7 @@ export default function Home() {
 
     {tab==='home' && <HomeView go={setTab} notify={notify} customers={customers} />}
     {tab==='scan' && <ScanView processing={processing} progress={ocrProgress} upload={upload} notify={notify} result={scanResult} setResult={setScanResult} save={saveContact} />}
-    {tab==='people' && <PeopleView query={query} setQuery={setQuery} customers={filtered} notify={notify} onCompose={setComposeCustomer} />}
+    {tab==='people' && <PeopleView query={query} setQuery={setQuery} customers={filtered} notify={notify} onCompose={setComposeCustomer} selected={selectedCustomers} setSelected={setSelectedCustomers} onBulk={()=>setShowBulkMail(true)} />}
     {tab==='history' && <HistoryView history={mailHistory} notify={notify} />}
     {tab==='settings' && <SettingsView sender={sender} googleConnected={!!googleAccessToken} sendMode={sendMode} setSendMode={setSendMode} autoGreeting={autoGreeting} setAutoGreeting={setAutoGreeting} signature={signature} setSignature={setSignature} companyContext={companyContext} setCompanyContext={setCompanyContext} notify={notify} onOpenGuide={()=>setShowGuide(true)} onOpenTemplate={()=>setShowTemplate(true)} onOpenProfile={()=>setShowProfile(true)} onOpenSender={()=>setShowSender(true)} />}
 
@@ -324,6 +342,7 @@ export default function Home() {
     {showProfile&&<ProfileEditor value={profile} client={supabase} onClose={()=>setShowProfile(false)} onSave={saveProfile}/>} 
     {showSender&&<SenderEditor value={sender} googleConnected={!!googleAccessToken} onConnectGoogle={connectGoogle} onClose={()=>setShowSender(false)} onSave={saveSender}/>} 
     {composeCustomer&&<MailComposer customer={composeCustomer} template={mailTemplate} sender={sender} connected={!!googleAccessToken} onConnect={connectGoogle} onClose={()=>setComposeCustomer(null)} onSend={sendMail}/>} 
+    {showBulkMail&&<BulkMailConfirm count={selectedCustomers.length} sender={sender} connected={!!googleAccessToken} onConnect={connectGoogle} onClose={()=>setShowBulkMail(false)} onSend={sendBulkMail}/>} 
     {toast&&<div className="toast" role="status"><span>✓</span><div><strong>{toast.title}</strong><small>{toast.detail}</small></div></div>}
   </main>;
 }
@@ -352,11 +371,19 @@ function ScanView({processing,progress,upload,notify,result,setResult,save}:{pro
   </section>;
 }
 
-function PeopleView({query,setQuery,customers,notify,onCompose}:{query:string;setQuery:(v:string)=>void;customers:Customer[];notify:(a:string,b:string)=>void;onCompose:(customer:Customer)=>void}) {
+function PeopleView({query,setQuery,customers,notify,onCompose,selected,setSelected,onBulk}:{query:string;setQuery:(v:string)=>void;customers:Customer[];notify:(a:string,b:string)=>void;onCompose:(customer:Customer)=>void;selected:string[];setSelected:(value:string[])=>void;onBulk:()=>void}) {
+  const toggle=(email:string)=>setSelected(selected.includes(email)?selected.filter(value=>value!==email):[...selected,email]);
   return <section className="screen"><PageHead kicker="CONTACTS" title="顧客リスト" sub={`${customers.length}件のコンタクト`}/><div className="search"><span>⌕</span><input aria-label="顧客を検索" value={query} onChange={e=>setQuery(e.target.value)} placeholder="氏名・会社名・メールで検索"/><button onClick={()=>notify('フィルター','登録日・送信状態・担当者で絞り込めます')}>絞込</button></div><div className="filter-chips"><button className="selected">すべて</button><button>確認待ち 0</button><button>送信済み</button><button>未送信</button></div>
-    <div className="people-list">{customers.length===0?<div className="empty-state compact-empty"><span>♙</span><strong>顧客はまだ登録されていません</strong><small>名刺を読み取ると自動で顧客リストに追加されます</small></div>:customers.map(c=><article key={c.email} onClick={()=>onCompose(c)}><span className={`initial ${c.tone}`}>{c.initial}</span><div><strong>{c.name}<i className={`dot ${c.status==='確認待ち'?'amber':''}`}/></strong><small>{c.company} ・ {c.role}</small><a>{c.email}</a></div><button aria-label={`${c.name}へメールを作成`}>✉</button></article>)}</div>
+    {customers.length>0&&<div className="bulk-toolbar"><button onClick={()=>setSelected(selected.length===customers.filter(c=>c.email).length?[]:customers.filter(c=>c.email).map(c=>c.email))}>{selected.length?'選択解除':'すべて選択'}</button><span>{selected.length}件選択中</span><button className="bulk-send" disabled={!selected.length} onClick={onBulk}>まとめてメール</button></div>}
+    <div className="people-list selectable">{customers.length===0?<div className="empty-state compact-empty"><span>♙</span><strong>顧客はまだ登録されていません</strong><small>名刺を読み取ると自動で顧客リストに追加されます</small></div>:customers.map(c=><article key={c.email} className={selected.includes(c.email)?'is-selected':''}><button className="contact-check" disabled={!c.email} onClick={()=>toggle(c.email)} aria-label={`${c.name}を選択`}>{selected.includes(c.email)?'✓':''}</button><span className={`initial ${c.tone}`}>{c.initial}</span><div onClick={()=>onCompose(c)}><strong>{c.name}<i className={`dot ${c.status==='確認待ち'?'amber':''}`}/></strong><small>{c.company} ・ {c.role}</small><a>{c.email}</a></div><button onClick={()=>onCompose(c)} aria-label={`${c.name}へメールを作成`}>✉</button></article>)}</div>
     <button className="export-btn" onClick={()=>notify('CSVを書き出しました','顧客データを安全にエクスポートしました')}>↓　CSVエクスポート</button>
   </section>;
+}
+
+function BulkMailConfirm({count,sender,connected,onConnect,onClose,onSend}:{count:number;sender:SenderConfig;connected:boolean;onConnect:()=>void;onClose:()=>void;onSend:()=>Promise<void>}){
+  const [sending,setSending]=useState(false);const [error,setError]=useState('');
+  const submit=async()=>{setSending(true);setError('');try{await onSend();}catch{setError('送信を完了できませんでした。接続状態を確認して、もう一度お試しください。');setSending(false);}};
+  return <div className="template-overlay" role="dialog" aria-modal="true"><div className="template-card bulk-confirm"><div className="template-head"><div><small>BULK SEND</small><h2>まとめて送信</h2></div><button onClick={onClose}>×</button></div><div className="bulk-count"><strong>{count}</strong><span>件へ個別送信</span></div><p>テンプレートの会社名・氏名・役職を顧客ごとに差し替えて、1通ずつ送信します。宛先同士にメールアドレスは表示されません。</p><div className="sender-security"><span>✉</span><small>送信元：{sender.email||'未設定'}（{providerLabel(sender.provider)}）</small></div>{error&&<div className="profile-message">{error}</div>}{!connected&&<button className="connect-before-send" onClick={onConnect}>Googleメールを接続して送信を有効化</button>}<div className="template-actions"><button onClick={onClose}>キャンセル</button><button disabled={!connected||sending} onClick={submit}>{sending?'送信中…':`${count}件を送信`}</button></div></div></div>;
 }
 
 function HistoryView({history,notify}:{history:MailEvent[];notify:(a:string,b:string)=>void}) { const success=history.filter(item=>item.status==='送信済み').length;return <section className="screen"><PageHead kicker="MAIL ACTIVITY" title="送信履歴" sub={`${history.length}件の送信記録`}/><div className="mail-overview"><div><small>THIS MONTH</small><strong>{history.length}<em>通</em></strong><span>送信結果を安全に記録</span></div><div className="ring"><b>{history.length?Math.round(success/history.length*100):'—'}{history.length?'%':''}</b><small>SUCCESS</small></div></div><div className="timeline"><h3>履歴</h3>{history.length===0?<div className="empty-state compact-empty"><span>✉</span><strong>メールはまだ送信されていません</strong><small>顧客を選択して文面を作成できます</small></div>:history.map(item=><button className="mail-event" key={item.id} onClick={()=>notify(item.name,item.subject)}><span>✉</span><div><strong>{item.name} 様</strong><small>{item.company} · {item.subject}</small></div><time>{new Date(item.sentAt).toLocaleString('ja-JP')}</time></button>)}</div></section>; }
